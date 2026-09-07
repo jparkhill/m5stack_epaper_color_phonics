@@ -23,6 +23,13 @@ bool available();
 /// Read the card-detect line. Returns false if the PMIC is unavailable.
 bool sdCardInserted();
 
+/// Cut every rail via the PMIC. Does not return on success -- the board is
+/// off and only the hardware power button brings it back.
+///
+/// The e-paper panel is bistable, so whatever is on screen when this is
+/// called stays on screen indefinitely at zero power.
+void powerOff();
+
 // --- Status LEDs -----------------------------------------------------------
 // Used as immediate feedback: an e-paper refresh takes ~10s, so the LED is
 // the only way to tell a child (or you) that a button press registered.

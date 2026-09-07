@@ -60,6 +60,42 @@ Run `btn` on the console and press each one to identify them.
 
 ---
 
+## Power
+
+The device powers itself **off** after **15 minutes** with no user activity
+(`kIdleSleepSec` in [`main/app/app.h`](main/app/app.h)). This is a real rail
+cut through the M5PM1 PMIC, not a CPU sleep state, so **only the hardware
+power button wakes it** — the lowest of the three side buttons.
+
+Because the e-paper panel is bistable, **the last card stays on the screen the
+whole time it is off, at zero power**. A sleeping device looks exactly like a
+printed flashcard. That is also why sleeping does not draw a "goodbye" screen:
+leaving the child's last word up is more useful than spending a 16 s refresh
+to replace it. Two descending notes play so it is clear the device chose to
+sleep rather than crashed.
+
+Only button presses and console commands count as activity — the idle clock
+repaint deliberately does not, or it would keep the device awake forever.
+
+`sleep` on the console triggers the identical path, which is how to test it
+without waiting a quarter of an hour. `stat` reports the countdown.
+
+## Refreshing the screen
+
+There is no automatic periodic redraw beyond the clock. The screen changes
+only when:
+
+| Trigger | What happens |
+|---|---|
+| Either cycle button, or `next` | New card + narration, one refresh |
+| Hold a cycle button, or `letter` | Next letter, one refresh |
+| Third button, or `again` | Narration replays, **no** refresh |
+| `repaint` | Recomposes the same card (picks up a new clock/temperature) |
+| 5 minutes idle | Clock repaint (`kIdleClockRefreshSec`) |
+
+Each refresh is ~16 s of blocking panel time, so the design spends them
+sparingly and gives feedback through the chirp and the LEDs instead.
+
 ## Build and flash
 
 Needs ESP-IDF v5.4+ (developed against 5.5.4). The target is pinned in

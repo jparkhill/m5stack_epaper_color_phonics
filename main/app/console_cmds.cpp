@@ -201,6 +201,13 @@ int cmdDeck(int, char**) {
     return 0;
 }
 
+int cmdSleep(int, char**) {
+    std::printf("powering off. Press the power button to wake.\n");
+    std::printf("(the current card stays on screen -- e-paper is bistable)\n");
+    requestSleep();
+    return 0;
+}
+
 int cmdReboot(int, char**) {
     std::printf("rebooting...\n");
     vTaskDelay(pdMS_TO_TICKS(200));
@@ -256,6 +263,8 @@ esp_err_t start() {
     reg("i2c", "Scan the internal I2C bus", cmdI2c);
     reg("env", "Read the SHT40 temperature/humidity now", cmdEnv);
     reg("deck", "Per-letter card counts", cmdDeck);
+    reg("sleep", "Power off now via the PMIC (tests the idle timeout path)",
+        cmdSleep);
     reg("reboot", "Restart the device", cmdReboot);
 
     err = esp_console_start_repl(repl);

@@ -31,6 +31,7 @@ enum class Req : uint8_t {
     kRepaint,
     kSelectCard,
     kStatusDump,
+    kSleep,
 };
 
 struct Message {
@@ -44,7 +45,37 @@ QueueHandle_t s_queue = nullptr;
 bool s_deck_ok = false;
 int64_t s_last_clock_refresh_us = 0;
 int64_t s_last_sensor_us = 0;
+int64_t s_last_activity_us = 0;
 uint32_t s_cards_shown = 0;
+
+/// Anything the user did. Resets the idle timeout.
+void noteActivity() { s_last_activity_us = esp_timer_get_time(); }
+
+void goToSleep(const char* why) {
+    ESP_LOGW(kTag, "sleeping: %s", why);
+    ESP_LOGW(kTag, "the current card stays on screen -- e-paper holds its "
+                   "image with no power");
+
+    // A descending pair so it is obvious the device chose to sleep rather
+    // than crashed.
+    hal::audio::tone(880.0f, 120);
+    hal::audio::tone(560.0f, 160);
+
+    hal::power::ledRainbowStop();
+    hal::power::ledSet(hal::power::Led::kIdle);
+
+    // Put the panel into its own sleep state before the rails drop, rather
+    // than cutting power mid-scan.
+    hal::display::gfx().sleep();
+
+    hal::power::powerOff();
+
+    // Only reached if the PMIC refused (e.g. held up by USB power).
+    ESP_LOGW(kTag, "power off did not take effect; resuming");
+    noteActivity();
+    hal::display::gfx().wakeup();
+    hal::power::ledRainbowStart();
+}
 
 void post(const Message& m) {
     if (s_queue == nullptr) return;
@@ -163,6 +194,9 @@ void dumpStatus() {
 
     ESP_LOGI(kTag, "volume          : %u/255", hal::audio::volume());
     ESP_LOGI(kTag, "buttons         : %s", hal::input::rawSnapshot());
+    ESP_LOGI(kTag, "sleeps in       : %lu s (idle timeout %lu min)",
+             (unsigned long)secondsUntilSleep(),
+             (unsigned long)(kIdleSleepSec / 60));
     boot::heapReport("now");
 }
 
@@ -193,6 +227,9 @@ void handle(const Message& m) {
             break;
         case Req::kStatusDump:
             dumpStatus();
+            break;
+        case Req::kSleep:
+            goToSleep("requested over the console");
             break;
     }
 }
@@ -236,8 +273,11 @@ void run() {
     // Attention-holder: keeps moving through the blocking panel refresh.
     hal::power::ledRainbowStart();
 
+    noteActivity();
     ESP_LOGI(kTag, "ready. Either cycle button = new word; hold = next letter; "
                    "third button = say it again");
+    ESP_LOGI(kTag, "auto power-off after %lu min of no activity",
+             (unsigned long)(kIdleSleepSec / 60));
 
     for (;;) {
         hal::input::update();
@@ -261,6 +301,7 @@ void run() {
 
         Message m{};
         if (xQueueReceive(s_queue, &m, pdMS_TO_TICKS(20)) == pdTRUE) {
+            noteActivity();
             handle(m);
             // Drain any presses that piled up during the ~10s refresh so one
             // impatient child does not queue up ten refreshes.
@@ -274,6 +315,12 @@ void run() {
         if (now - s_last_sensor_us > static_cast<int64_t>(kSensorSampleSec) * 1000000) {
             hal::sensors::refresh();
             s_last_sensor_us = now;
+        }
+
+        if (now - s_last_activity_us >
+            static_cast<int64_t>(kIdleSleepSec) * 1000000) {
+            goToSleep("no activity for 15 minutes");
+            continue;
         }
 
         if (s_deck_ok &&
@@ -290,6 +337,14 @@ void requestNextLetter() { post(Message{Req::kNextLetter, 0, 0}); }
 void requestReplay()     { post(Message{Req::kReplay, 0, 0}); }
 void requestRepaint()    { post(Message{Req::kRepaint, 0, 0}); }
 void requestStatusDump() { post(Message{Req::kStatusDump, 0, 0}); }
+void requestSleep()      { post(Message{Req::kSleep, 0, 0}); }
+
+uint32_t secondsUntilSleep() {
+    const int64_t elapsed = esp_timer_get_time() - s_last_activity_us;
+    const int64_t budget = static_cast<int64_t>(kIdleSleepSec) * 1000000;
+    if (elapsed >= budget) return 0;
+    return static_cast<uint32_t>((budget - elapsed) / 1000000);
+}
 
 void requestCard(char letter, int nth) {
     post(Message{Req::kSelectCard, letter, static_cast<int8_t>(nth)});

@@ -115,6 +115,19 @@ Register map (all bitmasks over `[4:0]`):
 | `0x16` | function select GPIO0–3, 2 bits each, `00` = plain GPIO |
 | `0x17` | function select GPIO4, `00` = plain GPIO |
 
+## Powering off
+
+Write `0xA1` to PMIC register `0x0C` — `[7:4]` is a key that must be `0xA`,
+`[1:0]` is the command (`01` = shutdown, `10` = reboot, `11` = download mode).
+The PMIC wants a settle window of ~120 ms before it will accept the write.
+
+This cuts every rail; the hardware power button is the only way back. Put the
+panel into its own sleep state (`M5.Display.sleep()`) first rather than
+dropping power mid-scan.
+
+The panel is bistable, so the last displayed image persists indefinitely with
+no power at all.
+
 ## Traps
 
 **Card detect is gated.** PMIC GPIO4 must be high before GPIO1 carries a

@@ -33,6 +33,17 @@ constexpr uint32_t kIdleClockRefreshSec = 300;
 /// fresh value is shown at the next repaint.
 constexpr uint32_t kSensorSampleSec = 30;
 
+/// Seconds of no user activity before the device powers itself off.
+///
+/// This is a real power cut through the PMIC, not a CPU sleep state, so only
+/// the hardware power button brings it back. The e-paper panel is bistable,
+/// so the last card stays on screen the whole time at zero power -- the
+/// device looks like a printed flashcard while it is off.
+///
+/// Only user activity counts: button presses and console commands. The idle
+/// clock repaint does not, or the device would never sleep.
+constexpr uint32_t kIdleSleepSec = 15 * 60;
+
 esp_err_t init();
 
 /// Main loop. Does not return.
@@ -45,5 +56,12 @@ void requestReplay();
 void requestRepaint();
 void requestCard(char letter, int nth);
 void requestStatusDump();
+
+/// Power the device off now (the `sleep` console command). Same path the idle
+/// timeout takes, so it is the way to test sleep without waiting 15 minutes.
+void requestSleep();
+
+/// Seconds remaining before the idle timeout fires.
+uint32_t secondsUntilSleep();
 
 }  // namespace app

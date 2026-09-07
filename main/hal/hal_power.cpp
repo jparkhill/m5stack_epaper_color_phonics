@@ -33,6 +33,12 @@ constexpr uint8_t kRegPupd0 = 0x14;  // 2 bits/pin for GPIO0..3, 01=pull-up
 constexpr uint8_t kRegFunc0 = 0x16;  // 2 bits/pin for GPIO0..3, 00=plain GPIO
 constexpr uint8_t kRegFunc1 = 0x17;  // [1:0] GPIO4, 00=plain GPIO
 
+// System command register. [7:4] must be the key 0xA, [1:0] is the command:
+// 00 no-op, 01 shutdown, 10 reboot, 11 download mode.
+constexpr uint8_t kRegSysCmd = 0x0C;
+constexpr uint8_t kSysCmdKey = 0xA0;
+constexpr uint8_t kSysCmdShutdown = 0x01;
+
 bool s_available = false;
 bool s_led_ok = false;
 
@@ -174,6 +180,25 @@ void ledRainbowStop() {
 }
 
 bool ledRainbowRunning() { return s_rainbow_task != nullptr; }
+
+void powerOff() {
+    if (!s_available) {
+        ESP_LOGE(kTag, "PMIC unavailable; cannot power off");
+        return;
+    }
+    ESP_LOGW(kTag, "cutting power via PMIC (press the power button to wake)");
+    // The PMIC wants a settle window before it will accept the command.
+    vTaskDelay(pdMS_TO_TICKS(120));
+    if (!wr(kRegSysCmd, static_cast<uint8_t>(kSysCmdKey | kSysCmdShutdown))) {
+        ESP_LOGE(kTag, "shutdown command write failed");
+        return;
+    }
+    // Rails drop within a few ms; if we are still here after this the command
+    // did not take.
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    ESP_LOGE(kTag, "still running after shutdown command -- is the board on "
+                   "external USB power that overrides the PMIC?");
+}
 
 void ledSet(Led state) {
     // The rainbow owns the LEDs while it runs; status colours would just be
