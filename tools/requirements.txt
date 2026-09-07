@@ -1,0 +1,14 @@
+# Asset pipeline (host-side only -- nothing here runs on the device).
+#
+# Install into a venv created with --system-site-packages so Pillow/numpy can
+# come from Debian packages (python3-pil, python3-numpy), which avoids a long
+# source build on ARM:
+#
+#   sudo apt-get install -y python3-pil python3-numpy
+#   python3 -m venv --system-site-packages tools/.venv
+#   tools/.venv/bin/pip install -r tools/requirements.txt
+piper-tts        # neural TTS; pulls onnxruntime
+ddgs             # DuckDuckGo image search (the /i.js endpoint 403s if scraped by hand)
+requests         # image downloads
+pillow           # image processing (or python3-pil)
+numpy            # Floyd-Steinberg dithering (or python3-numpy)

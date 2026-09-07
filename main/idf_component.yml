@@ -1,0 +1,13 @@
+## IDF Component Manager Manifest File
+##
+## M5GFX / M5Unified are pulled from the Espressif component registry
+## rather than vendored or submoduled: the M5GFX git tree carries ~128MB of CJK
+## font sources that this project never compiles.
+##
+## m5stack/m5pm1 is deliberately NOT used: its begin(m5::I2C_Class*) overload
+## is gated on an __has_include that is false inside its own translation unit,
+## so it links to nothing. hal_power.cpp drives the PMIC registers directly.
+dependencies:
+  idf: ">=5.4"
+  m5stack/m5gfx: "^0.2.28"
+  m5stack/m5unified: "^0.2.21"

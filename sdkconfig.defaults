@@ -1,0 +1,96 @@
+# ============================================================================
+# Phonics Cards -- M5Stack PaperColor (SKU C151), ESP32-S3R8
+# ============================================================================
+# Target is pinned here on purpose. Without it `idf.py build` on a clean clone
+# defaults to plain "esp32" and dependency resolution fails with a confusing
+# "no versions match" error instead of a target mismatch.
+CONFIG_IDF_TARGET="esp32s3"
+
+# ===== Partition Table =====
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ===== Serial Flasher (16MB flash) =====
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_BEFORE="default_reset"
+CONFIG_ESPTOOLPY_AFTER="hard_reset"
+
+# ===== Console: USB-Serial-JTAG as PRIMARY =====
+# This project deliberately does NOT enable TinyUSB. On the ESP32-S3 the
+# internal USB PHY routes to EITHER USB-Serial-JTAG OR USB-OTG, never both.
+# Keeping TinyUSB out means the USB-C cable stays a working serial console, so
+# `idf.py monitor` and `idf.py flash` both work over the one cable with no
+# button-holding. That is the whole point of the rich boot tracing below.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ===== Logging: verbose, timestamped, coloured =====
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y
+CONFIG_LOG_COLORS=y
+CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM=y
+
+# ===== PSRAM (Octal, 40MHz) =====
+# M5GFX refuses to initialise the PaperColor panel without OPI PSRAM: the
+# Panel_ED2208 driver allocates a 400*600*3 = 720KB RGB888 framebuffer there.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_40M=y
+CONFIG_SPIRAM_CLK_IO=30
+CONFIG_SPIRAM_CS_IO=26
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# ===== ESP System =====
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y
+
+# A single Spectra-6 panel refresh is POWER_ON -> DISPLAY_REFRESH -> POWER_OFF
+# and can legitimately block for ~10s (driver busy timeout is 20s). The panel
+# wait loop yields via vTaskDelay so the idle tasks still run, but give the
+# task WDT plenty of headroom regardless.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
+# ===== Panic / debug aids =====
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y
+CONFIG_HEAP_POISONING_LIGHT=y
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y
+
+# ===== Compiler =====
+# -O2 globally. This is NOT a free choice: LovyanGFX's framebuffer writes are
+# per-pixel templates that rely on aggressive inlining, and at -Og a single
+# fillScreen() on the 400x600 RGB888 PSRAM framebuffer takes ~17 SECONDS
+# (measured) instead of milliseconds -- the whole UI becomes unusable.
+#
+# M5Unified needs the opposite treatment, so it is compiled at -Og
+# individually; see the target_compile_options() call in the root
+# CMakeLists.txt for why.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_ENABLE=y
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
+# ===== Brownout Detector =====
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_7=y
+
+# ===== FAT Filesystem (microSD holds every card asset) =====
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_CODEPAGE_437=y
+CONFIG_FATFS_PER_FILE_CACHE=y
+CONFIG_FATFS_ALLOC_PREFER_EXTRAM=y
+
+# ===== I2C bus (m5pm1 dependency) =====
+CONFIG_I2C_BUS_DYNAMIC_CONFIG=y
+CONFIG_I2C_MS_TO_WAIT=200
+
+# ===== Wi-Fi / BT: off =====
+# No network dependency yet, by design. The clock is kept by the on-board
+# RX8130 RTC and set over the serial console (`time` command).
+CONFIG_ESP_WIFI_ENABLED=n
+CONFIG_BT_ENABLED=n
