@@ -20,9 +20,9 @@ constexpr const char* kTag = "input";
 constexpr uint8_t kLogicalToPhysical[3] = {0, 1, 2};
 
 constexpr const char* kLabels[3] = {
-    "cycle-A (BtnA/GPIO9)",
-    "cycle-B (BtnB/GPIO10)",
-    "extra (BtnC/GPIO1)",
+    "side (BtnA/GPIO9) -> next card",
+    "side (BtnB/GPIO10) -> next card",
+    "top (BtnC/GPIO1) -> next letter",
 };
 
 char s_snapshot[64];
@@ -48,8 +48,8 @@ void init() {
     ESP_LOGI(kTag, "buttons: GPIO%d, GPIO%d, GPIO%d (active-low). The 4th "
                    "(lowest side) is the PMIC power button and is not a GPIO.",
              pins::kBtnA, pins::kBtnB, pins::kBtnC);
-    ESP_LOGI(kTag, "GPIO9 and GPIO10 both cycle cards; GPIO1 replays. "
-                   "Run `btn` to identify them physically.");
+    ESP_LOGI(kTag, "GPIO9/GPIO10 (side) = next card; GPIO1 (top) = next letter. "
+                   "PWR_KEY is the PMIC power/wake key.");
 }
 
 void update() { M5.update(); }
@@ -62,11 +62,6 @@ bool wasPressed(Button b) {
 bool isHeld(Button b) {
     auto* btn = forLogical(b);
     return btn != nullptr && btn->isPressed();
-}
-
-bool wasHeldFor(Button b, uint32_t ms) {
-    auto* btn = forLogical(b);
-    return btn != nullptr && btn->wasReleaseFor(ms);
 }
 
 const char* rawSnapshot() {

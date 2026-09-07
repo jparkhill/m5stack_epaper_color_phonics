@@ -42,7 +42,8 @@ import requests
 from PIL import Image, ImageEnhance, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from phonics_data import build_cards, assert_unique_words  # noqa: E402
+from phonics_data import (build_cards, assert_unique_words,  # noqa: E402
+                          assert_letter_names)
 
 # --- Panel palette ---------------------------------------------------------
 # Copied verbatim from Panel_ED2208.cpp's epd_palette[]. Do not "improve"
@@ -418,6 +419,7 @@ def main():
                          "into <out>/audition and exit")
     args = ap.parse_args()
 
+    assert_letter_names()
     assert_unique_words()
     cards = build_cards()
     if args.only:

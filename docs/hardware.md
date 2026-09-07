@@ -283,6 +283,17 @@ transmit time. Only six of the sixteen codes are real inks:
 `0x4` and `0x7` are unused. **There is no grey**, so grey subjects dither to
 blue-and-white.
 
+**`setEpdMode()` is not a speed control.** It is the obvious place to look for
+a "less aggressive, faster" refresh, and it does nothing of the sort:
+`_epd_mode` is read in exactly one place, `_exec_transfer()`, to pick a dither
+algorithm. `_turn_on_display()` — POWER_ON, boost setup, DISPLAY_REFRESH,
+POWER_OFF, each with a busy-wait — is identical in every mode. Measured
+refresh time is ~16.1 s regardless of mode.
+
+There is no partial-update or fast-waveform path exposed by this driver, so
+~16 s per update is a hard floor. The only lever is to stop waiting idly
+through it: compose in PSRAM, start audio on the other core, then refresh.
+
 `setEpdMode()` selects the dither used at transmit time:
 
 | Mode | Dither |

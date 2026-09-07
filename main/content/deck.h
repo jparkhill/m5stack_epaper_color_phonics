@@ -70,8 +70,21 @@ const char* stats();
 
 const Card* current();
 
+/// Pick a card at random: a random letter, then a word for that letter.
+///
+/// Among that letter's words, one where the taught grapheme is the word's
+/// FIRST letter is preferred with probability kInitialGraphemeBias. Initial
+/// sounds are easier to hear, so they should dominate, but medial and final
+/// examples (bUg, boX, siX) still need to show up.
+///
+/// Never returns the same card twice in a row.
+const Card* advanceRandom();
+
+/// Probability of preferring a word-initial grapheme in advanceRandom().
+constexpr float kInitialGraphemeBias = 0.60f;
+
 /// Next card in a shuffled playlist covering the whole deck; reshuffles and
-/// wraps when exhausted, so a child never sees the same order twice.
+/// wraps when exhausted. Kept for the `next` console command.
 const Card* advance();
 
 /// First card of the next letter that has any cards.

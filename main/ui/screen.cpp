@@ -25,7 +25,7 @@ void Screen::init() {
     widgets_[1] = &card_;
     widget_count_ = 2;
 
-    setFooterHint("Press a button for a new word!");
+    setFooterHint("Side: new word    Top: next letter");
     ESP_LOGI(kTag, "layout: status %dx%d @%d,%d | image %dx%d @%d,%d | word %dx%d @%d,%d",
              theme::kStatusW, theme::kStatusH, theme::kStatusX, theme::kStatusY,
              theme::kImageW, theme::kImageH, theme::kImageX, theme::kImageY,

@@ -44,21 +44,30 @@ writing a widget and giving it a rectangle — see
 
 ## Buttons
 
-The device has four buttons: one on top and three on the side. The **lowest
-side button is a hardware power button** wired to the PMIC and is not readable
-as a GPIO, so firmware sees exactly three.
+Four buttons: one on top, three on the side. The **lowest side button is
+`PWR_KEY`**, wired to the PMIC — it powers the device on and off and is not
+readable as a GPIO. The other three are:
 
-| Action | Cost |
-|---|---|
-| **Either cycle button** — next card: picture + word, then narration | one panel refresh (~16 s) |
-| **Hold a cycle button** (0.7 s) — jump to the next letter | one panel refresh |
-| **Third button** — replay the current narration | instant, no refresh |
+| Button | GPIO | Action | Cost |
+|---|---|---|---|
+| **Either side button** | 9, 10 | Random card: picture + word, narrated | one refresh (~16 s) |
+| **Top button** | 1 | Step to the next letter of the alphabet | one refresh |
+| `PWR_KEY` | — | Power off / wake | — |
 
-Which GPIO is which physical button is not documented in any M5 source, so
-*both* cycle buttons do the same thing and it doesn't matter which is which.
-Run `btn` on the console and press each one to identify them.
+There are no hold or double-press gestures; every button does one thing on a
+single press.
 
----
+### How cards are chosen
+
+A side button picks a **random letter**, then a random word for that letter —
+biased so that a word where the taught grapheme is the word's **first letter**
+is chosen **60 %** of the time (`kInitialGraphemeBias` in
+[`main/content/deck.h`](main/content/deck.h)). Initial sounds are the easiest
+to hear, so they should dominate, but medial and final examples (`bUg`, `boX`,
+`siX`) still need to appear. The same card never comes up twice in a row.
+
+The top button is deliberately *not* random: it steps A → B → C so you can
+work through the alphabet in order.
 
 ## Power
 
@@ -87,14 +96,30 @@ only when:
 
 | Trigger | What happens |
 |---|---|
-| Either cycle button, or `next` | New card + narration, one refresh |
-| Hold a cycle button, or `letter` | Next letter, one refresh |
-| Third button, or `again` | Narration replays, **no** refresh |
+| Either side button, or `next` | Random card + narration, one refresh |
+| Top button, or `letter` | Next letter, one refresh |
+| `again` | Narration replays, **no** refresh |
 | `repaint` | Recomposes the same card (picks up a new clock/temperature) |
 | 5 minutes idle | Clock repaint (`kIdleClockRefreshSec`) |
 
-Each refresh is ~16 s of blocking panel time, so the design spends them
-sparingly and gives feedback through the chirp and the LEDs instead.
+### Why a refresh takes ~16 s, and what is done about it
+
+It cannot be made shorter. `epd_mode` looks like a speed control but is not —
+in `Panel_ED2208` it only selects the dither algorithm, while the part that
+costs the time (`_turn_on_display()`: POWER_ON → DISPLAY_REFRESH →
+POWER_OFF) is a fixed command sequence with no mode dependency. The ~16 s is
+the panel physically cycling pigment through its colour passes, and this
+driver exposes no partial or fast waveform.
+
+So instead the wait is *filled*. The frame is composed in PSRAM (~157 ms),
+then the narration is started on an audio task pinned to **CPU 1**, and only
+then is the refresh pushed on CPU 0. The child hears the word immediately
+while the picture develops, rather than sitting through 16 s of silence and
+then hearing it. The LEDs sweep throughout for the same reason.
+
+Because the SD card shares SPI2 with the panel, a clip is read into PSRAM
+*before* the refresh begins — never streamed off the card during it. That is
+why `hal_audio` splits `preloadWavFile()` from `playPreloadedAsync()`.
 
 ## Build and flash
 
@@ -164,6 +189,12 @@ and you get mud.
 `--length-scale 2.3` — roughly half the voice's natural pace. That is
 deliberate: at a normal speaking rate the short vowel sounds run together,
 which is exactly the distinction the device is trying to teach.
+
+The narration names the letter rather than sounding it: *"see makes the kuh
+sound"*, not *"kuh makes the kuh sound"*. Piper phonemises a bare capital
+letter unreliably, so `LETTER_NAMES` in `phonics_data.py` spells each name out
+("A" → `ay`, "C" → `see`, "W" → `double you`). Z is `zee` to match the
+American voice — change that one entry for `zed`.
 
 That voice has 904 speakers, so the speaker id is pinned; `--audition` renders
 one line across several speakers so you can pick by ear:

@@ -35,6 +35,24 @@ SOUNDS = {
     "Z": "zzz",
 }
 
+# How the letter's NAME is spoken, as opposed to the sound it makes.
+#
+# Piper phonemises a bare capital letter unreliably -- "C" comes out as the
+# /k/ sound rather than the name "see", which defeats the whole point of the
+# sentence "C makes the kuh sound". These are explicit spellings so the voice
+# says the name.
+#
+# Z is "zee" to match the American voice (en_US-libritts-high). Change it to
+# "zed" here if you would rather have the British name.
+LETTER_NAMES = {
+    "A": "ay",    "B": "bee",   "C": "see",   "D": "dee",   "E": "ee",
+    "F": "eff",   "G": "jee",   "H": "aitch", "I": "eye",   "J": "jay",
+    "K": "kay",   "L": "ell",   "M": "em",    "N": "en",    "O": "oh",
+    "P": "pee",   "Q": "cue",   "R": "ar",    "S": "ess",   "T": "tee",
+    "U": "you",   "V": "vee",   "W": "double you",          "X": "ex",
+    "Y": "why",   "Z": "zee",
+}
+
 # Extra hint appended to the image search to bias towards flat, high-contrast
 # cartoon art, which is what survives a 6-colour e-paper panel.
 IMAGE_STYLE_HINT = "cartoon clipart for kids simple white background"
@@ -154,8 +172,10 @@ def narration(letter, word, syllables):
     retuned in a single place.
     """
     sound = SOUNDS[letter]
+    # Spoken letter NAME, not the bare character: see LETTER_NAMES.
+    name = LETTER_NAMES[letter]
     parts = syllables.split("-")
-    head = f"{letter} makes the {sound} sound. {sound}, {sound}. "
+    head = f"{name} makes the {sound} sound. {sound}, {sound}. "
     if len(parts) == 1:
         # Single-syllable word: sounding it out would just say it twice.
         return head + f"{word}."
@@ -187,6 +207,14 @@ def build_cards():
     return cards
 
 
+def assert_letter_names():
+    """Every letter needs a spoken name, or the narration says the wrong thing."""
+    missing = [l for l in LETTERS if l not in LETTER_NAMES]
+    if missing:
+        raise ValueError(f"LETTER_NAMES missing: {missing}")
+    return len(LETTER_NAMES)
+
+
 def assert_unique_words():
     """No word may appear twice: each card needs its own picture."""
     seen = {}
@@ -201,6 +229,7 @@ def assert_unique_words():
 
 
 if __name__ == "__main__":
+    assert_letter_names()
     total = assert_unique_words()
     cards = build_cards()
     print(f"{len(cards)} cards, {total} unique words, {len(LETTERS)} letters")

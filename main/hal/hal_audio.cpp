@@ -10,6 +10,8 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <M5Unified.hpp>
 
@@ -65,6 +67,17 @@ int16_t* s_chunk = nullptr;          // kChunkFrames * 2 samples
 // PCM scratch for file playback (PSRAM).
 int16_t* s_pcm = nullptr;
 size_t s_pcm_cap = 0;
+size_t s_pcm_len = 0;          // bytes of the currently preloaded clip
+
+// --- async playback plumbing ---
+struct PlayReq {
+    const unsigned char* data;   // points into flash, or at s_pcm
+    unsigned int len;
+    char label[40];
+};
+QueueHandle_t s_play_q = nullptr;
+TaskHandle_t s_play_task = nullptr;
+volatile bool s_playing = false;
 
 struct WavInfo {
     uint32_t sample_rate;
@@ -136,7 +149,10 @@ bool enable() {
     return true;
 }
 
-void disable() {
+/// Not used in the normal flow -- the channel is brought up at init and left
+/// up for the device's lifetime, because start/stop per clip produced an
+/// audible transient. Kept for completeness and for stop().
+[[maybe_unused]] void disable() {
     if (!s_enabled) return;
     i2s_channel_disable(s_tx);
     s_enabled = false;
@@ -273,6 +289,30 @@ bool ensurePcm(size_t bytes) {
     return true;
 }
 
+/// Renders one queued clip. Lives on CPU1 so it overlaps the panel refresh
+/// that blocks CPU0.
+void playTask(void*) {
+    PlayReq req{};
+    for (;;) {
+        if (xQueueReceive(s_play_q, &req, portMAX_DELAY) != pdTRUE) continue;
+        s_playing = true;
+        WavInfo info{};
+        if (parseWavMemory(req.data, req.len, &info)) {
+            const int16_t* pcm =
+                reinterpret_cast<const int16_t*>(req.data + info.data_offset);
+            const size_t frames =
+                info.data_bytes / (sizeof(int16_t) * info.channels);
+            ESP_LOGI(kTag, "play %s (%.2fs, %luHz, %s) [async]", req.label,
+                     static_cast<float>(frames) /
+                         static_cast<float>(info.sample_rate),
+                     (unsigned long)info.sample_rate,
+                     info.channels == 2 ? "stereo" : "mono");
+            pushPcm(pcm, frames, info.channels, info.sample_rate);
+        }
+        s_playing = false;
+    }
+}
+
 }  // namespace
 
 esp_err_t init() {
@@ -325,6 +365,21 @@ esp_err_t init() {
     if (!enable()) {
         ESP_LOGW(kTag, "channel did not enable at init; will retry on first clip");
     }
+
+    s_play_q = xQueueCreate(2, sizeof(PlayReq));
+    if (s_play_q == nullptr) {
+        ESP_LOGE(kTag, "could not create the playback queue");
+        return ESP_ERR_NO_MEM;
+    }
+    // CPU1: the whole point is to keep rendering audio while the panel
+    // refresh blocks CPU0. 6KB is ample -- this task has no deep call chain
+    // and no alloca (unlike the M5Unified task this replaces).
+    if (xTaskCreatePinnedToCore(playTask, "audio_play", 6144, nullptr, 4,
+                                &s_play_task, 1) != pdPASS) {
+        ESP_LOGE(kTag, "could not start the playback task");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(kTag, "async playback task on CPU1 (overlaps the panel refresh)");
 
     ESP_LOGI(kTag, "I2S TX up @%luHz fixed (MCK=%d BCK=%d WS=%d DOUT=%d), "
                    "codec 0x%02X, vol %u",
@@ -391,6 +446,67 @@ bool playWavFile(const char* path) {
              (unsigned long)info.sample_rate, info.channels == 2 ? "stereo" : "mono");
 
     return pushPcm(pcm, frames, info.channels, info.sample_rate);
+}
+
+bool preloadWavFile(const char* path) {
+    if (!s_available || path == nullptr) return false;
+
+    // Never touch the shared buffer while the task is reading from it.
+    if (!waitIdle(5000)) {
+        ESP_LOGW(kTag, "preload: previous clip still playing, stopping it");
+        stop();
+    }
+
+    std::FILE* f = std::fopen(path, "rb");
+    if (f == nullptr) {
+        ESP_LOGE(kTag, "cannot open %s", path);
+        return false;
+    }
+    std::fseek(f, 0, SEEK_END);
+    const long size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (size <= 44 || !ensurePcm(static_cast<size_t>(size))) {
+        std::fclose(f);
+        return false;
+    }
+    const size_t got = std::fread(s_pcm, 1, static_cast<size_t>(size), f);
+    std::fclose(f);
+    if (got == 0) {
+        ESP_LOGE(kTag, "read 0 bytes from %s", path);
+        return false;
+    }
+    s_pcm_len = got;
+    ESP_LOGD(kTag, "preloaded %u bytes from %s", (unsigned)got, path);
+    return true;
+}
+
+bool playPreloadedAsync() {
+    if (!s_available || s_play_q == nullptr || s_pcm_len == 0) return false;
+    PlayReq req{};
+    req.data = reinterpret_cast<const unsigned char*>(s_pcm);
+    req.len = static_cast<unsigned int>(s_pcm_len);
+    std::snprintf(req.label, sizeof(req.label), "preloaded");
+    return xQueueSend(s_play_q, &req, pdMS_TO_TICKS(50)) == pdTRUE;
+}
+
+bool playMemoryAsync(const unsigned char* data, unsigned int len,
+                     const char* label) {
+    if (!s_available || s_play_q == nullptr || data == nullptr) return false;
+    PlayReq req{};
+    req.data = data;
+    req.len = len;
+    std::snprintf(req.label, sizeof(req.label), "%s", label ? label : "flash");
+    return xQueueSend(s_play_q, &req, pdMS_TO_TICKS(50)) == pdTRUE;
+}
+
+bool waitIdle(uint32_t timeout_ms) {
+    uint32_t waited = 0;
+    while ((s_playing || uxQueueMessagesWaiting(s_play_q) > 0) &&
+           waited < timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited += 10;
+    }
+    return waited < timeout_ms;
 }
 
 void tone(float freq_hz, uint32_t ms) {
@@ -471,9 +587,19 @@ void diagnose() {
     ESP_LOGW(kTag, "--- end diagnostics ---");
 }
 
-bool isPlaying() { return false; }   // synchronous playback
+bool isPlaying() {
+    return s_playing || (s_play_q != nullptr && uxQueueMessagesWaiting(s_play_q) > 0);
+}
 
-void stop() { disable(); }
+void stop() {
+    if (s_play_q != nullptr) xQueueReset(s_play_q);
+    // The task finishes the chunk it is in; that is at most ~12ms.
+    uint32_t waited = 0;
+    while (s_playing && waited < 500) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        waited += 10;
+    }
+}
 
 void setVolume(uint8_t v) { s_volume = v; }
 uint8_t volume() { return s_volume; }

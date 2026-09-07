@@ -94,27 +94,47 @@ void showCard(const content::Card* card, bool speak) {
     s_last_sensor_us = esp_timer_get_time();
 
     s_screen.cardView().setCard(card);
-    const uint32_t ms = s_screen.present(hal::display::RefreshMode::kImage);
+
+    // Compose the frame in PSRAM (~157ms) but do NOT push it yet.
+    s_screen.render();
+
+    // Kick the narration off on the audio task now. A panel refresh blocks
+    // this task for ~16s, so playing the sound afterwards means the child
+    // waits in silence and then hears the word. Starting it here lets the
+    // sound run WHILE the picture develops, which removes nearly all of the
+    // perceived latency.
+    //
+    // Any SD read has to happen before the refresh starts, because the card
+    // and the panel share SPI2 -- hence preload-then-play rather than
+    // streaming during the refresh.
+    bool narrating = false;
+    if (speak && card != nullptr) {
+        if (card->isBuiltin()) {
+            narrating = hal::audio::playMemoryAsync(card->audio_data,
+                                                    card->audio_len, card->display);
+        } else if (hal::audio::preloadWavFile(card->audio)) {
+            narrating = hal::audio::playPreloadedAsync();
+        }
+        if (!narrating) {
+            ESP_LOGW(kTag, "narration failed for %s", card->id);
+        } else {
+            hal::power::ledSet(hal::power::Led::kSpeaking);
+        }
+    }
+
+    const uint32_t ms = hal::display::present(hal::display::RefreshMode::kImage);
     s_last_clock_refresh_us = esp_timer_get_time();
 
     if (card != nullptr) {
         ++s_cards_shown;
-        ESP_LOGI(kTag, "card #%lu: %-10s letter=%c span=[%d,%d] (refresh %lums)",
+        ESP_LOGI(kTag, "card #%lu: %-10s letter=%c span=[%d,%d] (refresh %lums%s)",
                  (unsigned long)s_cards_shown, card->display, card->letter,
-                 card->span_start, card->span_len, (unsigned long)ms);
+                 card->span_start, card->span_len, (unsigned long)ms,
+                 narrating ? ", narrated during refresh" : "");
     }
 
-    if (speak && card != nullptr) {
-        hal::power::ledSet(hal::power::Led::kSpeaking);
-        const bool spoke =
-            card->isBuiltin()
-                ? hal::audio::playWavMemoryBlocking(card->audio_data,
-                                                    card->audio_len, card->display)
-                : hal::audio::playWavFileBlocking(card->audio);
-        if (!spoke) {
-            ESP_LOGW(kTag, "narration failed for %s", card->id);
-        }
-    }
+    // The clip is almost always finished by now; wait for the tail if not.
+    if (narrating) hal::audio::waitIdle(20000);
     hal::power::ledSet(hal::power::Led::kIdle);
 }
 
@@ -137,10 +157,11 @@ void replayAudio() {
     ESP_LOGI(kTag, "replaying %s (no panel refresh)", c->id);
     hal::power::ledSet(hal::power::Led::kSpeaking);
     if (c->isBuiltin()) {
-        hal::audio::playWavMemoryBlocking(c->audio_data, c->audio_len, c->display);
-    } else {
-        hal::audio::playWavFileBlocking(c->audio);
+        hal::audio::playMemoryAsync(c->audio_data, c->audio_len, c->display);
+    } else if (hal::audio::preloadWavFile(c->audio)) {
+        hal::audio::playPreloadedAsync();
     }
+    hal::audio::waitIdle(20000);
     hal::power::ledSet(hal::power::Led::kIdle);
 }
 
@@ -203,7 +224,7 @@ void dumpStatus() {
 void handle(const Message& m) {
     switch (m.req) {
         case Req::kNextCard:
-            if (s_deck_ok) showCard(content::advance(), true);
+            if (s_deck_ok) showCard(content::advanceRandom(), true);
             break;
         case Req::kNextLetter:
             if (s_deck_ok) showCard(content::advanceLetter(), true);
@@ -274,29 +295,26 @@ void run() {
     hal::power::ledRainbowStart();
 
     noteActivity();
-    ESP_LOGI(kTag, "ready. Either cycle button = new word; hold = next letter; "
-                   "third button = say it again");
+    ESP_LOGI(kTag, "ready. Side buttons = random card; top button = next letter");
     ESP_LOGI(kTag, "auto power-off after %lu min of no activity",
              (unsigned long)(kIdleSleepSec / 60));
 
     for (;;) {
         hal::input::update();
 
-        // Either cycle button shows the next card -- see hal_input.h for why
-        // both do the same thing. A long press jumps a whole letter.
-        if (hal::input::wasHeldFor(hal::input::Button::kCycleA, 700) ||
-            hal::input::wasHeldFor(hal::input::Button::kCycleB, 700)) {
-            ESP_LOGI(kTag, "long press -> next letter");
-            hal::audio::chirp();
-            requestNextLetter();
-        } else if (hal::input::wasPressed(hal::input::Button::kCycleA) ||
-                   hal::input::wasPressed(hal::input::Button::kCycleB)) {
-            ESP_LOGI(kTag, "press -> next card");
+        // Physical mapping confirmed on hardware (see hal_input.h):
+        // the two side buttons pick a random card, the top button steps to
+        // the next letter. No hold gestures -- they were unreliable and are
+        // hard for a small child anyway.
+        if (hal::input::wasPressed(hal::input::Button::kCardA) ||
+            hal::input::wasPressed(hal::input::Button::kCardB)) {
+            ESP_LOGI(kTag, "side button -> random card");
             hal::audio::chirp();
             requestNextCard();
-        } else if (hal::input::wasPressed(hal::input::Button::kExtra)) {
-            ESP_LOGI(kTag, "press -> replay narration");
-            requestReplay();
+        } else if (hal::input::wasPressed(hal::input::Button::kLetter)) {
+            ESP_LOGI(kTag, "top button -> next letter");
+            hal::audio::chirp();
+            requestNextLetter();
         }
 
         Message m{};

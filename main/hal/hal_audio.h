@@ -34,6 +34,31 @@ bool available();
 /// Play a 16-bit PCM WAV from the filesystem. Blocks until finished.
 bool playWavFile(const char* path);
 
+// --- Asynchronous playback -------------------------------------------------
+//
+// A ~16s panel refresh blocks the app task, so playing narration after it
+// means the child waits in silence and then hears the word. Playing it on a
+// separate task pinned to CPU1 lets the sound run WHILE the picture develops,
+// which removes essentially all of the perceived latency.
+//
+// The SD card shares SPI2 with the panel, so a file must be read into PSRAM
+// BEFORE the refresh starts -- never streamed off the card during it. Hence
+// the two-step preload/play split.
+
+/// Read a WAV off the filesystem into PSRAM. Call before starting a refresh.
+/// Blocks (SD access), but only for the read.
+bool preloadWavFile(const char* path);
+
+/// Start playing the most recently preloaded clip on the audio task and
+/// return immediately.
+bool playPreloadedAsync();
+
+/// Start playing an in-flash blob on the audio task and return immediately.
+bool playMemoryAsync(const unsigned char* data, unsigned int len, const char* label);
+
+/// Block until asynchronous playback finishes (or the timeout elapses).
+bool waitIdle(uint32_t timeout_ms = 30000);
+
 /// Play a 16-bit PCM WAV already in memory (an EMBED_FILES blob in flash).
 /// No copy is made. Blocks until finished.
 bool playWavMemory(const unsigned char* data, unsigned int len, const char* label);
@@ -62,7 +87,8 @@ void bootChime();
 /// from the firmware's side: the I2S writes succeed either way.
 void diagnose();
 
-bool isPlaying();   // always false: playback is synchronous
+/// True while the audio task is rendering a clip.
+bool isPlaying();
 void stop();
 
 void setVolume(uint8_t volume);   // 0-255, applied in software

@@ -305,6 +305,60 @@ const Card* advance() {
     return &s_cards[s_current];
 }
 
+const Card* advanceRandom() {
+    if (!s_loaded || s_count == 0) return nullptr;
+
+    // Letters that actually have cards.
+    uint8_t avail[26];
+    int n_avail = 0;
+    for (int i = 0; i < 26; ++i) {
+        if (s_per_letter[i] > 0) avail[n_avail++] = static_cast<uint8_t>(i);
+    }
+    if (n_avail == 0) return nullptr;
+
+    // Two attempts, so a repeat of the current card gets one re-roll rather
+    // than looping forever when the deck is tiny (e.g. built-ins only).
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const int li = avail[esp_random() % static_cast<uint32_t>(n_avail)];
+
+        // Split this letter's cards by whether the grapheme is word-initial.
+        uint16_t initial[16], other[16];
+        int n_init = 0, n_other = 0;
+        for (size_t i = 0; i < s_count; ++i) {
+            if (letterIndex(s_cards[i].letter) != li) continue;
+            if (s_cards[i].span_start == 0) {
+                if (n_init < 16) initial[n_init++] = static_cast<uint16_t>(i);
+            } else {
+                if (n_other < 16) other[n_other++] = static_cast<uint16_t>(i);
+            }
+        }
+        if (n_init == 0 && n_other == 0) continue;
+
+        // Roll for the bias, then fall back if the chosen bucket is empty.
+        const bool want_initial =
+            (esp_random() % 1000u) < static_cast<uint32_t>(kInitialGraphemeBias * 1000.0f);
+        const uint16_t* bucket = nullptr;
+        int bucket_n = 0;
+        if (want_initial && n_init > 0) {
+            bucket = initial; bucket_n = n_init;
+        } else if (!want_initial && n_other > 0) {
+            bucket = other; bucket_n = n_other;
+        } else if (n_init > 0) {
+            bucket = initial; bucket_n = n_init;
+        } else {
+            bucket = other; bucket_n = n_other;
+        }
+
+        const int pick = bucket[esp_random() % static_cast<uint32_t>(bucket_n)];
+        if (pick == s_current && s_count > 1) continue;   // re-roll a repeat
+        s_current = pick;
+        return &s_cards[pick];
+    }
+
+    // Both attempts landed on the current card; just advance the playlist.
+    return advance();
+}
+
 const Card* advanceLetter() {
     if (!s_loaded || s_count == 0) return nullptr;
     const char cur = (s_current >= 0) ? s_cards[s_current].letter : 'Z';
