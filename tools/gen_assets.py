@@ -59,6 +59,12 @@ PALETTE = np.array([
 
 IMAGE_SIZE = 384          # must match ui::theme::kImageW/H
 TTS_RATE = 22050
+# Duration multiplier for the TTS. 1.0 is the voice's natural pace; 2.3 is
+# roughly half speed, which is what a child sounding out letters needs -- the
+# natural rate runs the short vowel sounds together, which is exactly the
+# distinction the device is trying to teach.
+DEFAULT_LENGTH_SCALE = 2.3
+
 PIPER_VOICE = Path.home() / ".local/share/piper/en_US-libritts-high.onnx"
 PIPER_VOICE_FALLBACK = Path.home() / ".local/share/piper/en_US-lessac-medium.onnx"
 
@@ -328,7 +334,7 @@ class Narrator:
     the default rate clips the short vowel sounds we are trying to isolate.
     """
 
-    def __init__(self, voice_path, speaker_id=0, length_scale=1.15):
+    def __init__(self, voice_path, speaker_id=0, length_scale=DEFAULT_LENGTH_SCALE):
         from piper import PiperVoice
         from piper.config import SynthesisConfig
         self.voice = PiperVoice.load(str(voice_path))
@@ -404,8 +410,9 @@ def main():
                     help="path to a piper .onnx voice (default: libritts-high)")
     ap.add_argument("--speaker", type=int, default=0,
                     help="speaker id for multi-speaker voices")
-    ap.add_argument("--length-scale", type=float, default=1.15,
-                    help=">1 speaks slower; helps isolate short vowel sounds")
+    ap.add_argument("--length-scale", type=float, default=DEFAULT_LENGTH_SCALE,
+                    help=">1 speaks slower (duration multiplier); "
+                         f"default {DEFAULT_LENGTH_SCALE} is about half speed")
     ap.add_argument("--audition", action="store_true",
                     help="render one sample line across several speakers "
                          "into <out>/audition and exit")

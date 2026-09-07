@@ -124,9 +124,13 @@ and the firmware can present them with no on-device dithering. Dither twice
 and you get mud.
 
 **Narration** is [Piper](https://github.com/rhasspy/piper) neural TTS
-(`en_US-libritts-high`) at 22.05 kHz 16-bit mono. That voice has 904 speakers,
-so the speaker id is pinned; `--audition` renders one line across several
-speakers so you can pick by ear:
+(`en_US-libritts-high`) at 22.05 kHz 16-bit mono, rendered at
+`--length-scale 2.3` — roughly half the voice's natural pace. That is
+deliberate: at a normal speaking rate the short vowel sounds run together,
+which is exactly the distinction the device is trying to teach.
+
+That voice has 904 speakers, so the speaker id is pinned; `--audition` renders
+one line across several speakers so you can pick by ear:
 
 ```bash
 tools/.venv/bin/python tools/gen_assets.py --audition --out /tmp/aud
@@ -169,6 +173,7 @@ reflash. Type `help` for the list.
 | `i2c` | Scan the internal I2C bus |
 | `env` | Read the SHT40 now |
 | `vol 200` / `beep` | Speaker |
+| `audio` | Codec register read-back + a loud 2 s test tone |
 | `repaint` | Force a full repaint |
 | `reboot` | Restart |
 

@@ -41,6 +41,16 @@ constexpr CodecReg kCodecInit[] = {
     {0x37, 0x08},  // DAC: bypass equaliser
 };
 
+// The codec runs at ONE fixed rate and clips are resampled to it.
+//
+// Reg 0x01 = 0xB5 tells the ES8311 to derive its internal clock from BCLK,
+// and reg 0x02 = 0x18 (MULT_PRE = 3) is tuned for that. Reconfiguring the I2S
+// clock per clip therefore moves the codec's PLL, and at 22.05kHz it stops
+// producing audible output entirely -- the I2S writes still succeed, so it
+// looks fine from the firmware side. M5Unified drives this board at a fixed
+// 44100 stereo, so we do the same and resample instead.
+constexpr uint32_t kCodecRate = 44100;
+
 // One reusable DMA staging buffer. Mono input is expanded to stereo here
 // because the codec is wired for two slots.
 constexpr size_t kChunkFrames = 512;
@@ -113,23 +123,7 @@ i2s_std_clk_config_t clockFor(uint32_t rate) {
     return clk;
 }
 
-esp_err_t setRate(uint32_t rate) {
-    if (rate == s_rate) return ESP_OK;
-    if (s_enabled) {
-        i2s_channel_disable(s_tx);
-        s_enabled = false;
-    }
-    i2s_std_clk_config_t clk = clockFor(rate);
-    const esp_err_t err = i2s_channel_reconfig_std_clock(s_tx, &clk);
-    if (err != ESP_OK) {
-        ESP_LOGE(kTag, "reconfig to %luHz failed: %s", (unsigned long)rate,
-                 esp_err_to_name(err));
-        return err;
-    }
-    s_rate = rate;
-    ESP_LOGD(kTag, "I2S clock set to %luHz", (unsigned long)rate);
-    return ESP_OK;
-}
+
 
 bool enable() {
     if (s_enabled) return true;
@@ -148,42 +142,75 @@ void disable() {
     s_enabled = false;
 }
 
-/// Push interleaved-stereo PCM out of the I2S port, applying software volume
-/// and expanding mono to stereo on the way.
-bool pushPcm(const int16_t* pcm, size_t frames, uint16_t channels) {
+/// Push PCM out of the I2S port: resample to kCodecRate, expand mono to
+/// stereo, apply software volume.
+///
+/// Resampling is linear interpolation. For the 22.05kHz narration that is an
+/// exact 2x ratio so every other output frame is a real sample; it is plenty
+/// for speech on a small speaker.
+bool pushPcm(const int16_t* pcm, size_t frames, uint16_t channels,
+             uint32_t src_rate) {
     if (!s_available || pcm == nullptr || frames == 0) return false;
+    if (src_rate == 0) return false;
     if (!enable()) return false;
 
+    // Pre-roll of silence. The codec and the DMA pipeline both need a moment
+    // to settle, and without this the first few milliseconds of speech land
+    // during that settling and are heard as a hiccup at the head of the clip.
+    std::memset(s_chunk, 0, kChunkFrames * 2 * sizeof(int16_t));
+    for (int i = 0; i < 3; ++i) {   // ~35ms at 44.1kHz
+        size_t primed = 0;
+        i2s_channel_write(s_tx, s_chunk, kChunkFrames * 2 * sizeof(int16_t),
+                          &primed, 500);
+    }
+
     const int32_t gain = static_cast<int32_t>(s_volume);
-    size_t done = 0;
-    while (done < frames) {
-        const size_t n = (frames - done) < kChunkFrames ? (frames - done) : kChunkFrames;
-        for (size_t i = 0; i < n; ++i) {
+    // Fixed-point source position, 16.16.
+    const uint64_t step = (static_cast<uint64_t>(src_rate) << 16) / kCodecRate;
+    const uint64_t total_in = static_cast<uint64_t>(frames) << 16;
+
+    uint64_t pos = 0;
+    while (pos < total_in) {
+        size_t n = 0;
+        while (n < kChunkFrames && pos < total_in) {
+            const size_t i0 = static_cast<size_t>(pos >> 16);
+            const size_t i1 = (i0 + 1 < frames) ? i0 + 1 : i0;
+            const int32_t frac = static_cast<int32_t>(pos & 0xFFFF);
+
             int32_t l, r;
             if (channels == 2) {
-                l = pcm[(done + i) * 2];
-                r = pcm[(done + i) * 2 + 1];
+                const int32_t l0 = pcm[i0 * 2],     l1 = pcm[i1 * 2];
+                const int32_t r0 = pcm[i0 * 2 + 1], r1 = pcm[i1 * 2 + 1];
+                l = l0 + (((l1 - l0) * frac) >> 16);
+                r = r0 + (((r1 - r0) * frac) >> 16);
             } else {
-                l = r = pcm[done + i];
+                const int32_t s0 = pcm[i0], s1 = pcm[i1];
+                l = r = s0 + (((s1 - s0) * frac) >> 16);
             }
-            // volume 0..255 maps to 0..1.0
+
             l = (l * gain) >> 8;
             r = (r * gain) >> 8;
-            s_chunk[i * 2] = static_cast<int16_t>(l);
-            s_chunk[i * 2 + 1] = static_cast<int16_t>(r);
+            if (l > 32767) l = 32767; else if (l < -32768) l = -32768;
+            if (r > 32767) r = 32767; else if (r < -32768) r = -32768;
+
+            s_chunk[n * 2]     = static_cast<int16_t>(l);
+            s_chunk[n * 2 + 1] = static_cast<int16_t>(r);
+            ++n;
+            pos += step;
         }
+        if (n == 0) break;
         size_t written = 0;
-        const esp_err_t err = i2s_channel_write(s_tx, s_chunk, n * 2 * sizeof(int16_t),
+        const esp_err_t err = i2s_channel_write(s_tx, s_chunk,
+                                                n * 2 * sizeof(int16_t),
                                                 &written, 2000);
         if (err != ESP_OK) {
             ESP_LOGE(kTag, "i2s write failed: %s", esp_err_to_name(err));
             return false;
         }
-        done += n;
     }
 
-    // Flush a little silence so the codec does not hold the last sample and
-    // click when the channel stops.
+    // A little trailing silence so the codec does not hold the last sample
+    // and click when the channel stops.
     std::memset(s_chunk, 0, kChunkFrames * 2 * sizeof(int16_t));
     size_t written = 0;
     i2s_channel_write(s_tx, s_chunk, kChunkFrames * 2 * sizeof(int16_t), &written, 500);
@@ -272,7 +299,7 @@ esp_err_t init() {
     }
 
     i2s_std_config_t std_cfg{};
-    std_cfg.clk_cfg = clockFor(22050);
+    std_cfg.clk_cfg = clockFor(kCodecRate);
     std_cfg.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
                                                            I2S_SLOT_MODE_STEREO);
     std_cfg.gpio_cfg.mclk = pins::kSpkMclk;
@@ -289,13 +316,20 @@ esp_err_t init() {
         ESP_LOGE(kTag, "i2s_channel_init_std_mode: %s", esp_err_to_name(err));
         return err;
     }
-    s_rate = 22050;
+    s_rate = kCodecRate;
     s_volume = kDefaultVolume;
     s_available = true;
 
-    ESP_LOGI(kTag, "I2S TX up (MCK=%d BCK=%d WS=%d DOUT=%d), codec 0x%02X, vol %u",
-             pins::kSpkMclk, pins::kSpkBclk, pins::kSpkWs, pins::kSpkData,
-             kCodecAddr, s_volume);
+    // Bring the channel up now and leave it up: enabling it lazily made the
+    // first clip of each playback carry the start-up transient.
+    if (!enable()) {
+        ESP_LOGW(kTag, "channel did not enable at init; will retry on first clip");
+    }
+
+    ESP_LOGI(kTag, "I2S TX up @%luHz fixed (MCK=%d BCK=%d WS=%d DOUT=%d), "
+                   "codec 0x%02X, vol %u",
+             (unsigned long)kCodecRate, pins::kSpkMclk, pins::kSpkBclk,
+             pins::kSpkWs, pins::kSpkData, kCodecAddr, s_volume);
     return ESP_OK;
 }
 
@@ -312,10 +346,10 @@ bool playWavMemory(const unsigned char* data, unsigned int len, const char* labe
              static_cast<float>(frames) / static_cast<float>(info.sample_rate),
              (unsigned long)info.sample_rate, info.channels == 2 ? "stereo" : "mono");
 
-    if (setRate(info.sample_rate) != ESP_OK) return false;
-    const bool ok = pushPcm(pcm, frames, info.channels);
-    disable();
-    return ok;
+    // Deliberately NOT disabling the channel: leaving it enabled avoids a
+    // start/stop transient on every clip. auto_clear feeds zeros when we are
+    // not writing, so an idle channel is silent.
+    return pushPcm(pcm, frames, info.channels, info.sample_rate);
 }
 
 bool playWavFile(const char* path) {
@@ -356,21 +390,24 @@ bool playWavFile(const char* path) {
              static_cast<float>(frames) / static_cast<float>(info.sample_rate),
              (unsigned long)info.sample_rate, info.channels == 2 ? "stereo" : "mono");
 
-    if (setRate(info.sample_rate) != ESP_OK) return false;
-    const bool ok = pushPcm(pcm, frames, info.channels);
-    disable();
-    return ok;
+    return pushPcm(pcm, frames, info.channels, info.sample_rate);
 }
 
 void tone(float freq_hz, uint32_t ms) {
     if (!s_available || ms == 0) return;
-    constexpr uint32_t kToneRate = 22050;
-    if (setRate(kToneRate) != ESP_OK) return;
-
+    constexpr uint32_t kToneRate = kCodecRate;
     const size_t frames = (kToneRate * ms) / 1000;
     if (!enable()) return;
 
     size_t done = 0;
+    // Short silence lead-in, same reason as pushPcm().
+    std::memset(s_chunk, 0, kChunkFrames * 2 * sizeof(int16_t));
+    {
+        size_t primed = 0;
+        i2s_channel_write(s_tx, s_chunk, kChunkFrames * 2 * sizeof(int16_t),
+                          &primed, 500);
+    }
+
     const float step = 2.0f * static_cast<float>(M_PI) * freq_hz /
                        static_cast<float>(kToneRate);
     const int32_t gain = static_cast<int32_t>(s_volume);
@@ -397,7 +434,6 @@ void tone(float freq_hz, uint32_t ms) {
         }
         done += n;
     }
-    disable();
 }
 
 void chirp() { tone(1200.0f, 70); }
@@ -405,6 +441,34 @@ void chirp() { tone(1200.0f, 70); }
 void bootChime() {
     tone(880.0f, 110);
     tone(1320.0f, 130);
+}
+
+void diagnose() {
+    ESP_LOGW(kTag, "--- audio diagnostics ---");
+    ESP_LOGW(kTag, "codec 0x%02X present: %s", kCodecAddr,
+             M5.In_I2C.scanID(kCodecAddr, kCodecFreq) ? "yes" : "NO");
+    ESP_LOGW(kTag, "codec_en GPIO%d=%d  spk_en GPIO%d=%d", kCodecEnPin,
+             gpio_get_level(kCodecEnPin), kSpkEnPin, gpio_get_level(kSpkEnPin));
+
+    // Read the registers back: if these do not match what we wrote, the I2C
+    // writes are not sticking and no amount of I2S work will help.
+    for (const auto& r : kCodecInit) {
+        uint8_t got = 0xFF;
+        const bool ok =
+            M5.In_I2C.readRegister(kCodecAddr, r.reg, &got, 1, kCodecFreq);
+        ESP_LOGW(kTag, "  reg 0x%02X: wrote 0x%02X, read %s0x%02X%s", r.reg, r.val,
+                 ok ? "" : "(FAILED) ", got,
+                 (ok && got == r.val) ? "  ok" : "  <-- MISMATCH");
+    }
+
+    ESP_LOGW(kTag, "I2S fixed rate %luHz, volume %u/255",
+             (unsigned long)kCodecRate, s_volume);
+    ESP_LOGW(kTag, "playing a 2s 1kHz tone at full volume now...");
+    const uint8_t saved = s_volume;
+    s_volume = 255;
+    tone(1000.0f, 2000);
+    s_volume = saved;
+    ESP_LOGW(kTag, "--- end diagnostics ---");
 }
 
 bool isPlaying() { return false; }   // synchronous playback

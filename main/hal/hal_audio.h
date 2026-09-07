@@ -57,6 +57,11 @@ void tone(float freq_hz, uint32_t ms);
 /// Two rising notes, used once at boot to prove the speaker works.
 void bootChime();
 
+/// Read back the codec's configuration registers and play a loud, long test
+/// tone. Exists because a silent speaker looks identical to a working one
+/// from the firmware's side: the I2S writes succeed either way.
+void diagnose();
+
 bool isPlaying();   // always false: playback is synchronous
 void stop();
 

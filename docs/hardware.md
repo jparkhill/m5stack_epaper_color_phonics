@@ -234,10 +234,24 @@ taken from M5Unified's `_speaker_enabled_cb_papercolor`):
 | `0x32` | `0xCF` | DAC volume (+16 dB) |
 | `0x37` | `0x08` | bypass DAC equaliser |
 
-Because reg `0x01` makes the codec slave its clock to BCLK, the I2S sample
-rate can simply be set per clip and the codec follows — no host-side
-resampling. The narration WAVs are 22.05 kHz 16-bit mono and are played at
-their native rate.
+**The codec must be driven at one fixed sample rate.** Reg `0x01 = 0xB5` makes
+the ES8311 derive its internal clock from BCLK, and `0x02 = 0x18`
+(`MULT_PRE = 3`) is tuned for that. Reconfiguring the I2S clock per clip moves
+the codec's PLL, and at 22.05 kHz it produces **no audible output at all** —
+while `i2s_channel_write()` keeps returning `ESP_OK`, so from the firmware's
+side everything looks perfect. A silent speaker and a working one are
+indistinguishable without listening, which is what the `audio` console
+command exists for (it reads the codec registers back and plays a loud tone).
+
+M5Unified drives this board at a fixed 44100 stereo, so this project does the
+same and resamples clips in software instead (linear interpolation; the
+22.05 kHz narration is an exact 2× ratio).
+
+**Do not enable/disable the I2S channel per clip.** Each start/stop produces
+an audible transient at the head of the clip. Bring the channel up once at
+init and leave it up — with `auto_clear = true` an idle channel emits zeros,
+so it is silent. A short silence pre-roll before each clip covers the
+remaining settling time.
 
 ## Panel behaviour
 

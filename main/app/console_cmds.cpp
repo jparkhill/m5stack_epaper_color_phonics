@@ -145,6 +145,11 @@ int cmdVol(int argc, char** argv) {
     return 0;
 }
 
+int cmdAudio(int, char**) {
+    hal::audio::diagnose();
+    return 0;
+}
+
 int cmdBeep(int, char**) {
     hal::audio::chirp();
     std::printf("chirped at volume %u\n", hal::audio::volume());
@@ -246,6 +251,7 @@ esp_err_t start() {
     reg("btn", "Watch raw button GPIOs for 8s to identify top/middle/bottom", cmdBtn);
     reg("vol", "vol <0-255> -- get/set speaker volume", cmdVol);
     reg("beep", "Test the speaker", cmdBeep);
+    reg("audio", "Codec register read-back + a loud 2s test tone", cmdAudio);
     reg("sd", "microSD info; `sd remount` to re-mount after a swap", cmdSd);
     reg("i2c", "Scan the internal I2C bus", cmdI2c);
     reg("env", "Read the SHT40 temperature/humidity now", cmdEnv);
