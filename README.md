@@ -11,8 +11,16 @@ the word is lowercase. Then the speaker sounds it out:
 
 The status bar across the top shows the date, time, temperature and humidity.
 
-26 letters × 10 words = **260 cards**, all pictures and narration
-pre-generated on the host and written to a microSD card.
+26 letters × 10 words = **260 cards** on the SD card, plus 2 compiled into
+the firmware = **262**. All pictures and narration are pre-generated on the
+host.
+
+The card table is sized from the manifest at load time rather than capped.
+It was briefly fixed at 256 against a 262-card deck, and because that
+truncates the manifest's *tail* the loss fell entirely on the
+alphabetically-last letter — Z shipped with 4 words instead of 10, with only
+a log warning. A hard cap on content that is expected to grow is the wrong
+shape.
 
 ---
 

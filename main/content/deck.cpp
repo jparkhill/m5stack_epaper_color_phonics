@@ -17,7 +17,15 @@ namespace content {
 namespace {
 
 constexpr const char* kTag = "deck";
-constexpr size_t kMaxCards = 256;
+// The card table is sized from the manifest at load time, not fixed.
+//
+// It used to be capped at 256 while the deck grew to 260 SD cards plus 2
+// built-ins. The overflow was silent apart from one warning, and because it
+// truncates the TAIL of the manifest it ate the alphabetically-last letter:
+// Z shipped with 4 words instead of 10. A hard cap on content that is
+// expected to grow is the wrong shape entirely.
+constexpr size_t kInitialCards = 8;     // enough for the built-ins alone
+constexpr size_t kAbsoluteMaxCards = 4096;   // sanity bound, not a design limit
 constexpr size_t kMaxManifestBytes = 512u * 1024u;
 
 Card* s_cards = nullptr;
@@ -119,7 +127,7 @@ char* readWholeFile(const char* path, size_t* out_len) {
 }
 
 void reshuffle() {
-    if (s_count == 0) return;
+    if (s_count == 0 || s_order == nullptr) return;
     for (size_t i = 0; i < s_count; ++i) s_order[i] = static_cast<uint16_t>(i);
     // Fisher-Yates using the hardware RNG.
     for (size_t i = s_count - 1; i > 0; --i) {
@@ -142,13 +150,43 @@ int letterIndex(char letter) {
 
 namespace {
 
+size_t s_capacity = 0;
+
+/// Grow the table to hold at least `want` cards. Preserves existing entries.
+bool reserveCards(size_t want) {
+    if (want <= s_capacity) return true;
+    if (want > kAbsoluteMaxCards) {
+        ESP_LOGE(kTag, "refusing to allocate %u cards (bound is %u)",
+                 (unsigned)want, (unsigned)kAbsoluteMaxCards);
+        return false;
+    }
+    void* c = heap_caps_realloc(s_cards, want * sizeof(Card), MALLOC_CAP_SPIRAM);
+    if (c == nullptr) {
+        ESP_LOGE(kTag, "PSRAM realloc for %u cards (%u KB) failed",
+                 (unsigned)want, (unsigned)(want * sizeof(Card) / 1024));
+        return false;
+    }
+    s_cards = static_cast<Card*>(c);
+
+    void* o = heap_caps_realloc(s_order, want * sizeof(uint16_t),
+                                MALLOC_CAP_SPIRAM);
+    if (o == nullptr) {
+        ESP_LOGE(kTag, "PSRAM realloc for the playlist failed");
+        return false;
+    }
+    s_order = static_cast<uint16_t*>(o);
+
+    // Zero the newly added tail so a partially-filled table is never read as
+    // live data.
+    std::memset(s_cards + s_capacity, 0, (want - s_capacity) * sizeof(Card));
+    s_capacity = want;
+    ESP_LOGD(kTag, "card table capacity now %u (%u KB)", (unsigned)want,
+             (unsigned)(want * sizeof(Card) / 1024));
+    return true;
+}
+
 bool allocTable() {
-    if (s_cards != nullptr && s_order != nullptr) return true;
-    s_cards = static_cast<Card*>(
-        heap_caps_calloc(kMaxCards, sizeof(Card), MALLOC_CAP_SPIRAM));
-    s_order = static_cast<uint16_t*>(
-        heap_caps_calloc(kMaxCards, sizeof(uint16_t), MALLOC_CAP_SPIRAM));
-    return s_cards != nullptr && s_order != nullptr;
+    return reserveCards(kInitialCards);
 }
 
 void countCard(const Card& c) {
@@ -244,6 +282,18 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
     }
 
     const cJSON* arr = cJSON_GetObjectItemCaseSensitive(root, "cards");
+    if (cJSON_IsArray(arr)) {
+        // Size the table to exactly what this manifest needs, on top of any
+        // built-ins already registered.
+        const int declared = cJSON_GetArraySize(arr);
+        if (declared > 0 && !reserveCards(s_count + static_cast<size_t>(declared))) {
+            ESP_LOGE(kTag, "cannot size the table for %d cards", declared);
+            cJSON_Delete(root);
+            return ESP_ERR_NO_MEM;
+        }
+        ESP_LOGI(kTag, "manifest declares %d cards; table sized to %u",
+                 declared, (unsigned)s_capacity);
+    }
     if (!cJSON_IsArray(arr)) {
         ESP_LOGE(kTag, "manifest has no \"cards\" array");
         cJSON_Delete(root);
@@ -252,9 +302,12 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
 
     const cJSON* item = nullptr;
     cJSON_ArrayForEach(item, arr) {
-        if (s_count >= kMaxCards) {
-            ESP_LOGW(kTag, "manifest exceeds %u cards; ignoring the rest",
-                     (unsigned)kMaxCards);
+        if (s_count >= s_capacity) {
+            // Should be unreachable now the table is sized from the manifest;
+            // loud rather than a warning, because silently dropping content
+            // is exactly the bug this replaced.
+            ESP_LOGE(kTag, "card table full at %u -- DROPPING the rest of the "
+                           "manifest", (unsigned)s_capacity);
             break;
         }
 
