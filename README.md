@@ -117,10 +117,19 @@ still appear. The same card never comes up twice in a row.
 > If the idle power-off is more trouble than it is worth, `nosleep` on the
 > console disables it permanently (saved to NVS); `autosleep` restores it.
 
-The device powers itself **off** after **15 minutes** with no user activity
-(`kIdleSleepSec` in [`main/app/app.h`](main/app/app.h)). This is a real rail
-cut through the M5PM1 PMIC, not a CPU sleep state, so **only the hardware
-power button wakes it** — the lowest of the three side buttons.
+After **15 minutes** with no user activity (`kIdleSleepSec` in
+[`main/app/app.h`](main/app/app.h)) the device enters **ESP32-S3 deep sleep**.
+**Any of the three front buttons wakes it**, and waking is a full chip reset,
+so it boots from scratch.
+
+It deliberately does *not* use the PMIC's shutdown for this. That cuts the
+peripheral rails without resetting the chip on battery power, which leaves the
+board half-powered — shoulder LEDs still cycling, panel and SD dead, and
+unrecoverable by PWR_KEY. See [`docs/hardware.md`](docs/hardware.md).
+
+`PWR_KEY` cannot wake from deep sleep because it is a PMIC pin, not an ESP32
+GPIO. It still works as a hardware off/on, and `poweroff` on the console does
+a true rail cut (falling back to deep sleep if the chip does not reset).
 
 Because the e-paper panel is bistable, **the last card stays on the screen the
 whole time it is off, at zero power**. A sleeping device looks exactly like a

@@ -226,10 +226,22 @@ int cmdAutoSleep(int, char**) {
 }
 
 int cmdSleep(int, char**) {
-    std::printf("powering off. QUICK-press PWR_KEY to wake (holding it "
-                "enters download mode).\n");
+    std::printf("entering deep sleep. Press ANY of the three front buttons to "
+                "wake.\n");
+    std::printf("Waking is a full chip reset, so it boots from scratch "
+                "(~25s to the first card).\n");
     std::printf("(the current card stays on screen -- e-paper is bistable)\n");
     requestSleep();
+    return 0;
+}
+
+int cmdPowerOff(int, char**) {
+    std::printf("cutting rails via the PMIC (a true off).\n");
+    std::printf("NOTE: on battery this may not reset the chip, in which case "
+                "it falls back\n");
+    std::printf("to deep sleep rather than leaving the board half-powered.\n");
+    std::printf("Wake: quick-press PWR_KEY, or any front button if it slept.\n");
+    hal::power::powerOff();
     return 0;
 }
 
@@ -309,8 +321,10 @@ esp_err_t start() {
     reg("i2c", "Scan the internal I2C bus", cmdI2c);
     reg("env", "Read the SHT40 temperature/humidity now", cmdEnv);
     reg("deck", "Per-letter card counts", cmdDeck);
-    reg("sleep", "Power off now via the PMIC (tests the idle timeout path)",
+    reg("sleep", "Deep sleep now; any front button wakes (tests the idle path)",
         cmdSleep);
+    reg("poweroff", "Cut rails via the PMIC (true off; PWR_KEY to wake)",
+        cmdPowerOff);
     reg("nosleep", "Disable the idle auto power-off (persisted in NVS)",
         cmdNoSleep);
     reg("autosleep", "Re-enable the idle auto power-off (persisted)",

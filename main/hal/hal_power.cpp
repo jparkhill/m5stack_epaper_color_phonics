@@ -4,7 +4,9 @@
 #include <cmath>
 #include <cstdio>
 
+#include <driver/rtc_io.h>
 #include <esp_log.h>
+#include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <M5Unified.hpp>
@@ -355,6 +357,38 @@ void dumpPowerState() {
     ESP_LOGW(kTag, "--- end ---");
 }
 
+void enterDeepSleep() {
+    // Buttons are active-low, so wake on ANY_LOW. All three are inside the
+    // ESP32-S3's 22 RTC-capable GPIOs (SOC_RTCIO_PIN_COUNT == 22), which is
+    // what makes them usable as EXT1 sources at all.
+    const uint64_t mask = (1ULL << pins::kBtnA) | (1ULL << pins::kBtnB) |
+                          (1ULL << pins::kBtnC);
+
+    // Hold the pins up through sleep. Without this they can float once the
+    // digital domain goes down and wake the board immediately.
+    const gpio_num_t wake_pins[] = {pins::kBtnA, pins::kBtnB, pins::kBtnC};
+    for (const gpio_num_t pin : wake_pins) {
+        rtc_gpio_init(pin);
+        rtc_gpio_set_direction(pin, RTC_GPIO_MODE_INPUT_ONLY);
+        rtc_gpio_pulldown_dis(pin);
+        rtc_gpio_pullup_en(pin);
+    }
+
+    const esp_err_t err =
+        esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "ext1 wake config failed: %s", esp_err_to_name(err));
+    }
+
+    ESP_LOGW(kTag, "entering deep sleep; wake on GPIO%d/%d/%d (any button)",
+             pins::kBtnA, pins::kBtnB, pins::kBtnC);
+    ESP_LOGW(kTag, "the e-paper keeps its image at zero power");
+    // Let the log drain before the UART dies with the rest of the chip.
+    vTaskDelay(pdMS_TO_TICKS(120));
+
+    esp_deep_sleep_start();   // never returns; wake is a full reset
+}
+
 void powerOff() {
     if (!s_available) {
         ESP_LOGE(kTag, "PMIC unavailable; cannot power off");
@@ -368,11 +402,15 @@ void powerOff() {
         ESP_LOGE(kTag, "shutdown command write failed");
         return;
     }
-    // Rails drop within a few ms; if we are still here after this the command
-    // did not take.
+    // Rails drop within a few ms. If we are still executing after this, the
+    // PMIC did not reset the chip -- which is the documented behaviour on
+    // battery power -- and continuing would leave the device half-powered:
+    // LEDs alive, panel and SD dead. Deep sleep instead, which is a state we
+    // can actually get out of.
     vTaskDelay(pdMS_TO_TICKS(1500));
-    ESP_LOGE(kTag, "still running after shutdown command -- is the board on "
-                   "external USB power that overrides the PMIC?");
+    ESP_LOGW(kTag, "PMIC shutdown did not reset the chip (expected on battery);"
+                   " falling back to deep sleep");
+    enterDeepSleep();
 }
 
 void ledSet(Led state) {

@@ -145,6 +145,52 @@ reading 0x40 = 2500 mV here) and below it the PMIC will not start the rails
 from the cell. It is a genuine mechanism — it just was **not** the cause of
 the wake failures on this unit, whose cell was at 4.2 V.
 
+## Sleeping: use the ESP32-S3's own deep sleep, NOT the PMIC
+
+The PMIC has a shutdown command and it is the obvious way to implement an
+idle timeout. It is the wrong tool, and M5GFX's source says why:
+
+```cpp
+// PMIC is always-on powered, and with battery power, shutdown doesn't reset the chip.
+```
+
+Writing `SYS_CMD_SHUTDOWN` cuts the **peripheral** rails while the ESP32-S3
+keeps executing. The result is a half-powered zombie:
+
+| | |
+|---|---|
+| LED task | still running — GPIO21 is driven from the chip's own supply |
+| e-paper | dead (rail cut) |
+| microSD, ES8311 codec | dead |
+| PWR_KEY | useless, because the chip never resets |
+
+On the bench that presents as "the shoulder LEDs cycle but nothing else
+responds, and power-cycling does not help" — and it is genuinely confusing,
+because the moving LEDs prove code is running.
+
+**Deep sleep is a real state machine.** CPU and peripherals power down, the
+RTC domain retains the wake logic, and a wake event **resets the chip**, so it
+boots from scratch with `esp_reset_reason() == ESP_RST_DEEPSLEEP`. That is the
+full cycle the PMIC path never completed.
+
+```c
+// Buttons are active-low; all three are within the S3's 22 RTC-capable GPIOs
+// (SOC_RTCIO_PIN_COUNT == 22), which is what makes them valid EXT1 sources.
+const uint64_t mask = (1ULL << 9) | (1ULL << 10) | (1ULL << 1);
+rtc_gpio_pullup_en(...);   // else they float once the digital domain drops
+esp_sleep_enable_ext1_wakeup_io(mask, ESP_EXT1_WAKEUP_ANY_LOW);
+esp_deep_sleep_start();    // noreturn
+```
+
+**PWR_KEY cannot be a wake source.** It is a PMIC pin, not an ESP32 GPIO, so
+the RTC domain cannot see it. Wake is therefore any of the three front
+buttons. PWR_KEY still works as a hardware off/on because the PMIC handles it
+itself.
+
+The explicit `poweroff` command still uses the PMIC for a true rail cut, but
+falls back to deep sleep if the chip is still executing 1.5 s later — never
+leaving the board in the half-powered state.
+
 ## Powering off
 
 Write `0xA1` to PMIC register `0x0C` — `[7:4]` is a key that must be `0xA`,

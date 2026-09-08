@@ -124,21 +124,19 @@ void goToSleep(const char* why) {
     // than crashed.
     hal::audio::tone(880.0f, 120);
     hal::audio::tone(560.0f, 160);
+    hal::audio::stop();
 
     hal::power::ledRainbowStop();
     hal::power::ledSet(hal::power::Led::kIdle);
 
-    // Put the panel into its own sleep state before the rails drop, rather
-    // than cutting power mid-scan.
+    // Panel into its own sleep state first, so it is not cut off mid-scan.
     hal::display::gfx().sleep();
 
-    hal::power::powerOff();
-
-    // Only reached if the PMIC refused (e.g. held up by USB power).
-    ESP_LOGW(kTag, "power off did not take effect; resuming");
-    noteActivity();
-    hal::display::gfx().wakeup();
-    hal::power::ledRainbowStart();
+    // DEEP SLEEP, not a PMIC shutdown. The PMIC's shutdown does not reset
+    // the chip on battery power, which left the board half-powered: LED task
+    // still running, panel and SD dead, and unrecoverable by PWR_KEY. Deep
+    // sleep resets the chip on wake, so it comes back properly.
+    hal::power::enterDeepSleep();   // never returns
 }
 
 void post(const Message& m) {
