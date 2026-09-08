@@ -17,11 +17,29 @@ namespace hal::power {
 /// (M5.begin brings the bus up).
 esp_err_t init();
 
+/// Hand the deep-sleep wake pins back to the normal GPIO matrix.
+///
+/// enterDeepSleep() puts the three button pins under RTC-mux control so they
+/// can act as EXT1 wake sources, and that mux assignment SURVIVES the wake
+/// reset. Left alone, M5Unified's digital reads of GPIO9/10/1 return nothing
+/// useful and every button appears dead -- on a board that is otherwise
+/// running perfectly. Call this before M5.begin() configures them.
+void releaseWakePins();
+
 /// True when the PMIC responded to init().
 bool available();
 
 /// Read the card-detect line. Returns false if the PMIC is unavailable.
 bool sdCardInserted();
+
+/// True if the PMIC reports its 3V3 LDO and 5V DCDC rails as ENABLED.
+///
+/// Used as a "am I half-powered?" check. If the PMIC has cut the rails while
+/// the ESP32-S3 keeps executing -- which is what its SYS_CMD_SHUTDOWN does on
+/// battery power -- then the panel, SD card and codec are dead while the LED
+/// task carries on, and the device looks alive but does nothing. Detecting it
+/// turns a baffling symptom into one log line.
+bool railsUp();
 
 /// Battery state, read from the PMIC's own voltage sensor.
 struct Battery {

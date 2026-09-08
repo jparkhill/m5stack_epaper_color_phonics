@@ -10,6 +10,7 @@
 #include "app/app.h"
 #include "app/console_cmds.h"
 #include "boot/boot_trace.h"
+#include "boot/power_log.h"
 #include "content/deck.h"
 #include "hal/hal_audio.h"
 #include "hal/hal_display.h"
@@ -52,6 +53,14 @@ void initNvs() {
 
 extern "C" void app_main(void) {
     boot::begin();
+    boot::plog::begin();   // records BOOT + WAKE (with cause) into RTC memory
+
+    // Before ANY GPIO setup. After a deep-sleep wake the three button pins are
+    // still owned by the RTC mux (they were EXT1 wake sources), and that
+    // assignment outlives the wake reset. If we leave it, M5Unified reads them
+    // as dead and every button stops working -- on a board that otherwise
+    // booted fine.
+    hal::power::releaseWakePins();
 
     // --- Display first: M5.begin() brings up the internal I2C bus, the PMIC
     // rails and the panel, which everything else depends on. ---------------
@@ -127,8 +136,11 @@ extern "C" void app_main(void) {
         hal::sd::dumpInfo();
         uint64_t total_mb = 0, free_mb = 0;
         hal::sd::usage(&total_mb, &free_mb);
+        boot::plog::record(boot::plog::Event::kSdMounted, hal::sd::clockKhz());
         boot::ok("%llu MB, %lu kHz", total_mb, (unsigned long)hal::sd::clockKhz());
     } else {
+        boot::plog::record(boot::plog::Event::kSdFailed,
+                           static_cast<uint32_t>(err));
         boot::fail(err, "mount %s", hal::sd::kMountPoint);
     }
 
@@ -142,6 +154,8 @@ extern "C" void app_main(void) {
     if (hal::sd::mounted()) {
         err = content::load(kManifestPath, /*verify_assets=*/true);
         if (err == ESP_OK) {
+            boot::plog::record(boot::plog::Event::kDeckLoaded,
+                               static_cast<uint32_t>(content::cardCount()));
             boot::ok("%s", content::stats());
         } else {
             boot::fail(err, "load %s", kManifestPath);

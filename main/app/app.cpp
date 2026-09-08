@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "boot/boot_trace.h"
+#include "boot/power_log.h"
 #include "content/deck.h"
 #include "hal/hal_audio.h"
 #include "hal/hal_display.h"
@@ -77,6 +78,8 @@ void saveSleepSetting() {
 void noteActivity() { s_last_activity_us = esp_timer_get_time(); }
 
 int64_t s_pending_repaint_us = 0;   // 0 = nothing pending
+int64_t s_last_rail_check_us = 0;
+bool s_warned_rails_down = false;
 
 /// Queue the narration for `card` at the current focus: the shared per-letter
 /// clip, then the word clip.
@@ -129,8 +132,17 @@ void goToSleep(const char* why) {
     hal::power::ledRainbowStop();
     hal::power::ledSet(hal::power::Led::kIdle);
 
-    // Panel into its own sleep state first, so it is not cut off mid-scan.
-    hal::display::gfx().sleep();
+    // Deliberately NOT calling gfx().sleep() here.
+    //
+    // It looks like the tidy thing to do, but Panel_ED2208 already issues
+    // POWER_OFF at the end of every display() -- the panel is idle before we
+    // ever get here. setSleep(true) additionally puts the controller into its
+    // own deep-sleep mode, which needs a specific wake sequence that M5GFX's
+    // init does not reliably perform after a chip reset. The symptom is a
+    // board that wakes, runs (LEDs cycling) and never updates the screen.
+    //
+    // The image survives regardless: e-paper is bistable and holds it with no
+    // power at all.
 
     // DEEP SLEEP, not a PMIC shutdown. The PMIC's shutdown does not reset
     // the chip on battery power, which left the board half-powered: LED task
@@ -233,6 +245,10 @@ void dumpStatus() {
     // nothing. The log path always writes through.
     ESP_LOGI(kTag, "--- status ---");
     ESP_LOGI(kTag, "uptime          : %.1f s", esp_timer_get_time() / 1e6);
+    // The reset reason is otherwise only in the boot banner, which is easy to
+    // miss -- and it is exactly what distinguishes "woke from deep sleep"
+    // from "the PMIC cut the rails without resetting me".
+    ESP_LOGI(kTag, "reset reason    : %s", boot::resetReasonText());
     ESP_LOGI(kTag, "cards shown     : %lu", (unsigned long)s_cards_shown);
     ESP_LOGI(kTag, "panel refreshes : %lu (last %lu ms)",
              (unsigned long)hal::display::refreshCount(),
@@ -388,6 +404,8 @@ void run() {
     hal::power::ledRainbowStart();
 
     noteActivity();
+    boot::plog::record(boot::plog::Event::kReady,
+                       static_cast<uint32_t>(content::cardCount()));
     ESP_LOGI(kTag, "ready. upper side = next card | lower side = repeat | "
                    "top = next letter in the word");
     if (s_sleep_enabled) {
@@ -458,6 +476,28 @@ void run() {
         if (now - s_last_sensor_us > static_cast<int64_t>(kSensorSampleSec) * 1000000) {
             hal::sensors::refresh();
             s_last_sensor_us = now;
+        }
+
+        // "Am I half-powered?" -- if the PMIC has cut the rails while we keep
+        // executing, the panel/SD/codec are dead and only the LEDs still
+        // work. Say so loudly once, so the next report identifies itself
+        // instead of presenting as an unexplained unresponsive board.
+        if (now - s_last_rail_check_us > 5000000) {
+            s_last_rail_check_us = now;
+            if (!hal::power::railsUp()) {
+                if (!s_warned_rails_down) {
+                    s_warned_rails_down = true;
+                    boot::plog::record(boot::plog::Event::kRailsDown);
+                    ESP_LOGE(kTag, "*** PMIC reports the 3V3/5V rails are OFF "
+                                   "while this code is still running.");
+                    ESP_LOGE(kTag, "*** The panel, SD card and codec are dead; "
+                                   "only the LEDs will respond.");
+                    ESP_LOGE(kTag, "*** Quick-press PWR_KEY to restore power, "
+                                   "then reset. See docs/hardware.md.");
+                }
+            } else {
+                s_warned_rails_down = false;
+            }
         }
 
         if (s_sleep_enabled &&

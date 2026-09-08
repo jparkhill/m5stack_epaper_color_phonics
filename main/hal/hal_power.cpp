@@ -1,5 +1,6 @@
 #include "hal/hal_power.h"
 #include "hal/hal_pins.h"
+#include "boot/power_log.h"
 
 #include <cmath>
 #include <cstdio>
@@ -140,6 +141,15 @@ bool rmw(uint8_t reg, uint8_t clear_mask, uint8_t set_mask) {
 
 }  // namespace
 
+void releaseWakePins() {
+    // Safe to call unconditionally: rtc_gpio_deinit() on a pin that was never
+    // put under RTC control is a no-op.
+    const gpio_num_t wake_pins[] = {pins::kBtnA, pins::kBtnB, pins::kBtnC};
+    for (const gpio_num_t pin : wake_pins) {
+        rtc_gpio_deinit(pin);
+    }
+}
+
 esp_err_t init() {
     if (!M5.In_I2C.scanID(pins::kAddrPm1, kFreq)) {
         ESP_LOGE(kTag, "M5PM1 not responding at 0x%02X", pins::kAddrPm1);
@@ -218,6 +228,15 @@ void ledRainbowStop() {
 }
 
 bool ledRainbowRunning() { return s_rainbow_task != nullptr; }
+
+bool railsUp() {
+    if (!s_available) return false;
+    uint8_t cfg = 0;
+    if (!rd(kRegPwrCfg, &cfg)) return false;
+    constexpr uint8_t kLdoEn = 1u << 2;
+    constexpr uint8_t kDcdcEn = 1u << 1;
+    return (cfg & kLdoEn) && (cfg & kDcdcEn);
+}
 
 Battery readBattery() {
     Battery b{};
@@ -380,6 +399,8 @@ void enterDeepSleep() {
         ESP_LOGE(kTag, "ext1 wake config failed: %s", esp_err_to_name(err));
     }
 
+    boot::plog::record(boot::plog::Event::kSleepEnter,
+                       static_cast<uint32_t>(mask));
     ESP_LOGW(kTag, "entering deep sleep; wake on GPIO%d/%d/%d (any button)",
              pins::kBtnA, pins::kBtnB, pins::kBtnC);
     ESP_LOGW(kTag, "the e-paper keeps its image at zero power");
@@ -394,6 +415,7 @@ void powerOff() {
         ESP_LOGE(kTag, "PMIC unavailable; cannot power off");
         return;
     }
+    boot::plog::record(boot::plog::Event::kPowerOffCmd);
     ESP_LOGW(kTag, "cutting power via PMIC; quick-press PWR_KEY to wake "
                    "(do NOT hold -- holding enters download mode)");
     // The PMIC wants a settle window before it will accept the command.

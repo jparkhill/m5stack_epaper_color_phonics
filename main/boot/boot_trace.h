@@ -54,6 +54,10 @@ void i2cScan();
 /// Log internal + PSRAM heap free/largest-block under a label.
 void heapReport(const char* label);
 
+/// Human-readable reset reason for the current boot. Available after
+/// begin(), and repeated in `stat` because the boot banner scrolls away.
+const char* resetReasonText();
+
 /// Milliseconds since begin().
 uint32_t elapsedMs();
 

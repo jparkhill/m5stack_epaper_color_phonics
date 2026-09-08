@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "main.cpp"
         "boot/boot_trace.cpp"
+        "boot/power_log.cpp"
         "hal/hal_power.cpp"
         "hal/hal_display.cpp"
         "hal/hal_sensors.cpp"

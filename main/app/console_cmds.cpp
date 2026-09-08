@@ -1,6 +1,7 @@
 #include "app/console_cmds.h"
 #include "app/app.h"
 #include "boot/boot_trace.h"
+#include "boot/power_log.h"
 #include "content/deck.h"
 #include "hal/hal_audio.h"
 #include "hal/hal_display.h"
@@ -252,6 +253,16 @@ int cmdPmic(int argc, char** argv) {
     return 0;
 }
 
+int cmdPlog(int argc, char** argv) {
+    if (argc >= 2 && std::strcmp(argv[1], "clear") == 0) {
+        boot::plog::clear();
+        std::printf("power event log cleared\n");
+        return 0;
+    }
+    boot::plog::dump();
+    return 0;
+}
+
 int cmdBatt(int, char**) {
     hal::power::dumpPowerState();
     return 0;
@@ -329,6 +340,8 @@ esp_err_t start() {
         cmdNoSleep);
     reg("autosleep", "Re-enable the idle auto power-off (persisted)",
         cmdAutoSleep);
+    reg("plog", "Power event log across sleeps/resets; `plog clear` to wipe",
+        cmdPlog);
     reg("batt", "Battery voltage, power source, LVP threshold, PMIC sleep cfg",
         cmdBatt);
     reg("pmic", "pmic [first_hex] [last_hex] -- hex-dump PMIC registers",

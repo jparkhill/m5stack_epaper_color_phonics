@@ -272,6 +272,8 @@ void summary() {
     std::printf("Type `help` for debug commands.\n\n");
 }
 
+const char* resetReasonText() { return resetReasonName(esp_reset_reason()); }
+
 bool anyFailed() { return s_any_failed; }
 
 const char* firstFailure() { return s_any_failed ? s_first_failure : nullptr; }
