@@ -21,6 +21,13 @@ public:
 
     /// The card to render; nullptr renders the "insert an SD card" placeholder.
     void setCard(const content::Card* card) { card_ = card; }
+
+    /// Which characters of the word to highlight. Overrides the card's own
+    /// span, because the top button steps the taught letter through the word.
+    void setFocus(int8_t start, int8_t len) {
+        focus_start_ = start;
+        focus_len_ = len;
+    }
     const content::Card* card() const { return card_; }
 
     /// Message shown instead of a card when the deck could not load.
@@ -34,6 +41,8 @@ private:
     void drawPlaceholder(M5GFX& g);
 
     const content::Card* card_{nullptr};
+    int8_t focus_start_{0};
+    int8_t focus_len_{0};
     Rect word_bounds_{};
     char ph1_[48]{};
     char ph2_[48]{};

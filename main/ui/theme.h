@@ -48,6 +48,15 @@ constexpr int kStatusBandCount =
 constexpr int kStatusTextOutlineRadius = 2;
 
 // --- Screen geometry (portrait 400x600) ------------------------------------
+//
+// Region positions are chosen to sit next to the PHYSICAL buttons, so the
+// on-screen hints point at the right hardware:
+//   * the top button is in the middle of the title bar  -> hint centred, just
+//     below the bar, with an arrow pointing UP into it
+//   * the two side buttons are on the LEFT edge, the first just below the
+//     title bar and the second one line lower -> hints in a left gutter with
+//     arrows pointing LEFT
+// The lowest side button is PWR_KEY and is deliberately unlabelled.
 constexpr int16_t kScreenW = 400;
 constexpr int16_t kScreenH = 600;
 
@@ -61,32 +70,40 @@ constexpr int16_t kStatusH = 64;
 constexpr int16_t kRuleY = 64;
 constexpr int16_t kRuleH = 3;
 
-// Square image area -- deliberately square, 384x384, horizontally centred.
-constexpr int16_t kImageX = 8;
-constexpr int16_t kImageY = 70;
-constexpr int16_t kImageW = 384;
-constexpr int16_t kImageH = 384;
+// Hint for the TOP button: centred immediately under the status bar.
+constexpr int16_t kHintTopY = 69;
+constexpr int16_t kHintTopH = 22;
 
-// Word band beneath the image. Sized so DejaVu72 (~72px tall) plus its
-// outline fits: the word is the point of the device and should dominate this
-// strip, not float in the middle of it.
+// Left gutter holding the two side-button hints.
+constexpr int16_t kGutterX = 0;
+constexpr int16_t kGutterW = 66;
+constexpr int16_t kHintSide1Y = 96;    // just below the status bar
+constexpr int16_t kHintSide2Y = 124;   // one line lower
+constexpr int16_t kHintRowH = 22;
+
+// Square image area, to the right of the gutter.
+constexpr int16_t kImageX = 72;
+constexpr int16_t kImageY = 94;
+constexpr int16_t kImageW = 320;
+constexpr int16_t kImageH = 320;
+
+// Word band -- the biggest region on the screen, because the word is the
+// point of the device.
 constexpr int16_t kWordX = 0;
-constexpr int16_t kWordY = 458;
+constexpr int16_t kWordY = 420;
 constexpr int16_t kWordW = 400;
-constexpr int16_t kWordH = 118;
-
-// Footer hint strip -- kept deliberately thin to feed the word band.
-constexpr int16_t kFooterX = 0;
-constexpr int16_t kFooterY = 576;
-constexpr int16_t kFooterW = 400;
-constexpr int16_t kFooterH = 24;
+constexpr int16_t kWordH = 174;
 
 // Horizontal breathing room reserved either side of the word, on top of the
 // outline radius, so a long word never touches the bezel.
 constexpr int16_t kWordSideMargin = 6;
 
+// Hint text metrics.
+constexpr int16_t kArrowSize = 7;
+
 // --- Metrics ---------------------------------------------------------------
 constexpr int kFrameThickness = 3;
+constexpr uint32_t kHintInk = kBlack;
 constexpr int kWordOutlineRadius = 3;
 
 }  // namespace ui::theme

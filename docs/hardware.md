@@ -125,8 +125,48 @@ This cuts every rail; the hardware power button is the only way back. Put the
 panel into its own sleep state (`M5.Display.sleep()`) first rather than
 dropping power mid-scan.
 
+**Do not let an idle timeout fire while a USB host is attached.** The rails
+drop, USB-Serial-JTAG disappears mid-session, and the board looks bricked —
+`/dev/ttyACM*` simply vanishes and a flash fails with
+`could not open port`. Gate it on `usb_serial_jtag_is_connected()`.
+
 The panel is bistable, so the last displayed image persists indefinitely with
 no power at all.
+
+## Text-to-speech traps (host side, but they bite hard)
+
+Not hardware, but the same class of problem: **espeak fails silently.** It
+never errors — it just says something confidently wrong, and you only find out
+by listening to 260 clips. Verify with piper's phonemizer instead:
+
+```python
+from piper import PiperVoice
+v = PiperVoice.load(".../en_US-libritts-high.onnx")
+"".join("".join(x) for x in v.phonemize("fff"))   # -> 'ɛfɛfɛf'
+```
+
+Found this way:
+
+| Written | espeak says | Should be |
+|---|---|---|
+| `ay` | /ˈaɪ/ "eye" | letter A is /eɪ/ — use `eigh` |
+| `eff` | /ɛf ɛf ɛf/ | letter F is /ɛf/ — use `ef` |
+| `fff` | /ɛf ɛf ɛf/ | the /f/ sound, not the name three times |
+| `eh` | /eɪ/ | short-e /ɛ/ |
+| `ih` | /aɪ/ | short-i /ɪ/ |
+| `ks` | /keɪ ɛs/ | /ks/ |
+
+A bare vowel letter is *always* read as that letter's name, so an isolated
+short vowel is unreachable through text. espeak's `[[...]]` markup passes
+phonemes through verbatim and is the only reliable route:
+
+```
+"eigh makes the [[æ]] sound."  ->  ˈeɪ mˈeɪks ðə æ sˈaʊnd.
+```
+
+Isolated plosives are a separate problem: /b/ with no following vowel is
+essentially inaudible, so stops use a `-uh` syllable (`[[bʌ]]`, `[[kʌ]]`),
+matching what phonics programmes teach anyway.
 
 ## Traps
 

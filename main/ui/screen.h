@@ -27,20 +27,20 @@ public:
     /// render() then push to the panel. BLOCKS ~10s. Returns refresh ms.
     uint32_t present(hal::display::RefreshMode mode = hal::display::RefreshMode::kImage);
 
-    /// Footer hint line; pass nullptr to hide it.
-    void setFooterHint(const char* hint);
-
     /// Log the region table (the `ui` console command).
     void describe() const;
 
 private:
     void drawChrome(M5GFX& g);
+    static void drawArrowUp(M5GFX& g, int16_t cx, int16_t cy, int16_t size,
+                            uint32_t color);
+    static void drawArrowLeft(M5GFX& g, int16_t cx, int16_t cy, int16_t size,
+                              uint32_t color);
 
     StatusBar status_;
     CardView card_;
     Widget* widgets_[2]{};
     size_t widget_count_{0};
-    char footer_[64]{};
 };
 
 }  // namespace ui

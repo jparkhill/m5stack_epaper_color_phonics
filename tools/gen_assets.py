@@ -42,8 +42,9 @@ import requests
 from PIL import Image, ImageEnhance, ImageOps
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from phonics_data import (build_cards, assert_unique_words,  # noqa: E402
-                          assert_letter_names)
+from phonics_data import (build_cards, build_letters,  # noqa: E402
+                          assert_unique_words, assert_letter_names,
+                          LETTER_NAMES, SOUND_LABELS)
 
 # --- Panel palette ---------------------------------------------------------
 # Copied verbatim from Panel_ED2208.cpp's epd_palette[]. Do not "improve"
@@ -447,6 +448,22 @@ def main():
 
     ddg = DuckDuckGoImages(delay=args.delay) if not args.skip_images else None
 
+    # --- 26 letter clips, reused by every word -------------------------------
+    letters = build_letters()
+    if not args.skip_audio:
+        (root / "letters").mkdir(parents=True, exist_ok=True)
+        print(f"letter clips ({len(letters)}):")
+        for l in letters:
+            dest = root / l["audio"]
+            if dest.exists() and not args.force_audio:
+                print(f"  {l['letter']}  cached")
+                continue
+            narrator.synth(l["narration"], dest)
+            with wave.open(str(dest), "rb") as w:
+                dur = w.getnframes() / w.getframerate()
+            print(f"  {l['letter']}  {dur:.2f}s  \"{l['narration']}\"")
+        print()
+
     stats = {"img_ok": 0, "img_cached": 0, "img_placeholder": 0,
              "aud_ok": 0, "aud_cached": 0, "fail": 0}
 
@@ -502,12 +519,19 @@ def main():
                 "audio": card["audio"],
             })
 
+    # Manifest v2: the letter clips are listed separately from the word
+    # clips, because the firmware pairs one of each at playback time.
     manifest = {
-        "version": 1,
+        "version": 2,
         "generator": "tools/gen_assets.py",
         "voice": voice_path.name,
         "image_size": IMAGE_SIZE,
         "palette": "spectra6",
+        "letters": [
+            {"letter": l["letter"], "name": l["name"], "sound": l["sound"],
+             "audio": l["audio"]}
+            for l in letters if (root / l["audio"]).exists()
+        ],
         "cards": entries,
     }
     manifest_path = root / "manifest.json"
@@ -519,7 +543,8 @@ def main():
     short = {k: v for k, v in per_letter.items() if v < 5}
 
     print("\n" + "=" * 60)
-    print(f"manifest : {manifest_path}  ({len(entries)} cards)")
+    print(f"manifest : {manifest_path}  ({len(entries)} cards, "
+          f"{len(manifest['letters'])} letter clips)")
     print(f"images   : {stats['img_ok']} new, {stats['img_cached']} cached, "
           f"{stats['img_placeholder']} placeholder")
     print(f"audio    : {stats['aud_ok']} new, {stats['aud_cached']} cached")

@@ -11,12 +11,14 @@
 #include "ui/screen.h"
 
 #include <cstdio>
+#include <cstring>
 
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <driver/usb_serial_jtag.h>
 #include <M5Unified.hpp>
 
 namespace app {
@@ -32,6 +34,7 @@ enum class Req : uint8_t {
     kSelectCard,
     kStatusDump,
     kSleep,
+    kNextLetterInWord,
 };
 
 struct Message {
@@ -94,6 +97,10 @@ void showCard(const content::Card* card, bool speak) {
     s_last_sensor_us = esp_timer_get_time();
 
     s_screen.cardView().setCard(card);
+    {
+        const content::Focus f = content::currentFocus();
+        s_screen.cardView().setFocus(f.start, f.len);
+    }
 
     // Compose the frame in PSRAM (~157ms) but do NOT push it yet.
     s_screen.render();
@@ -107,13 +114,37 @@ void showCard(const content::Card* card, bool speak) {
     // Any SD read has to happen before the refresh starts, because the card
     // and the panel share SPI2 -- hence preload-then-play rather than
     // streaming during the refresh.
+    // Narration is TWO clips played back to back: the shared per-letter clip
+    // for whichever letter is in focus, then the word clip. That split is
+    // what makes "step through every letter of the word" affordable -- see
+    // tools/phonics_data.py.
+    //
+    // Both reads must finish BEFORE the refresh starts, because the SD card
+    // and the panel share SPI2.
     bool narrating = false;
     if (speak && card != nullptr) {
+        const content::Focus focus = content::currentFocus();
         if (card->isBuiltin()) {
             narrating = hal::audio::playMemoryAsync(card->audio_data,
-                                                    card->audio_len, card->display);
-        } else if (hal::audio::preloadWavFile(card->audio)) {
-            narrating = hal::audio::playPreloadedAsync();
+                                                    card->audio_len,
+                                                    card->display);
+        } else {
+            const char* letter_clip = content::letterAudioPath(focus.letter);
+            const bool have_letter =
+                letter_clip != nullptr &&
+                hal::audio::preloadWavFile(hal::audio::Slot::kLetter, letter_clip);
+            const bool have_word =
+                hal::audio::preloadWavFile(hal::audio::Slot::kWord, card->audio);
+
+            if (have_letter) {
+                char lbl[8];
+                std::snprintf(lbl, sizeof(lbl), "%c", focus.letter);
+                narrating |= hal::audio::playSlotAsync(hal::audio::Slot::kLetter, lbl);
+            }
+            if (have_word) {
+                narrating |= hal::audio::playSlotAsync(hal::audio::Slot::kWord,
+                                                       card->display);
+            }
         }
         if (!narrating) {
             ESP_LOGW(kTag, "narration failed for %s", card->id);
@@ -156,10 +187,20 @@ void replayAudio() {
     }
     ESP_LOGI(kTag, "replaying %s (no panel refresh)", c->id);
     hal::power::ledSet(hal::power::Led::kSpeaking);
+    const content::Focus focus = content::currentFocus();
     if (c->isBuiltin()) {
         hal::audio::playMemoryAsync(c->audio_data, c->audio_len, c->display);
-    } else if (hal::audio::preloadWavFile(c->audio)) {
-        hal::audio::playPreloadedAsync();
+    } else {
+        const char* letter_clip = content::letterAudioPath(focus.letter);
+        if (letter_clip != nullptr &&
+            hal::audio::preloadWavFile(hal::audio::Slot::kLetter, letter_clip)) {
+            char lbl[8];
+            std::snprintf(lbl, sizeof(lbl), "%c", focus.letter);
+            hal::audio::playSlotAsync(hal::audio::Slot::kLetter, lbl);
+        }
+        if (hal::audio::preloadWavFile(hal::audio::Slot::kWord, c->audio)) {
+            hal::audio::playSlotAsync(hal::audio::Slot::kWord, c->display);
+        }
     }
     hal::audio::waitIdle(20000);
     hal::power::ledSet(hal::power::Led::kIdle);
@@ -229,6 +270,13 @@ void handle(const Message& m) {
         case Req::kNextLetter:
             if (s_deck_ok) showCard(content::advanceLetter(), true);
             break;
+        case Req::kNextLetterInWord:
+            if (s_deck_ok) {
+                const content::Focus f = content::advanceFocus();
+                ESP_LOGI(kTag, "focus -> '%c' at offset %d", f.letter, f.start);
+                showCard(content::current(), true);
+            }
+            break;
         case Req::kReplay:
             replayAudio();
             break;
@@ -273,7 +321,6 @@ esp_err_t init() {
         if (!hal::sd::mounted()) why = "microSD not mounted";
         s_screen.cardView().setPlaceholder(why, "run tools/provision_sd.sh");
         s_screen.cardView().setCard(nullptr);
-        s_screen.setFooterHint("check the serial console for details");
         ESP_LOGE(kTag, "starting in DIAGNOSTIC mode: %s", why);
     }
     return ESP_OK;
@@ -295,26 +342,31 @@ void run() {
     hal::power::ledRainbowStart();
 
     noteActivity();
-    ESP_LOGI(kTag, "ready. Side buttons = random card; top button = next letter");
-    ESP_LOGI(kTag, "auto power-off after %lu min of no activity",
-             (unsigned long)(kIdleSleepSec / 60));
+    ESP_LOGI(kTag, "ready. upper side = next card | lower side = repeat | "
+                   "top = next letter in the word");
+    ESP_LOGI(kTag, "auto power-off after %lu min of no activity%s",
+             (unsigned long)(kIdleSleepSec / 60),
+             kSleepWhileUsbConnected ? "" : " (deferred while USB is attached)");
 
     for (;;) {
         hal::input::update();
 
-        // Physical mapping confirmed on hardware (see hal_input.h):
-        // the two side buttons pick a random card, the top button steps to
-        // the next letter. No hold gestures -- they were unreliable and are
-        // hard for a small child anyway.
-        if (hal::input::wasPressed(hal::input::Button::kCardA) ||
-            hal::input::wasPressed(hal::input::Button::kCardB)) {
-            ESP_LOGI(kTag, "side button -> random card");
+        // Physical mapping, confirmed on hardware (see hal_input.h):
+        //   G10 upper side -> next card
+        //   G9  lower side -> repeat the current letter + word
+        //   G1  top (middle of the title bar) -> next letter IN THE WORD
+        //   PWR_KEY        -> power/wake, handled by the PMIC
+        if (hal::input::wasPressed(hal::input::Button::kNextCard)) {
+            ESP_LOGI(kTag, "upper side -> next card");
             hal::audio::chirp();
             requestNextCard();
-        } else if (hal::input::wasPressed(hal::input::Button::kLetter)) {
-            ESP_LOGI(kTag, "top button -> next letter");
+        } else if (hal::input::wasPressed(hal::input::Button::kRepeat)) {
+            ESP_LOGI(kTag, "lower side -> repeat");
+            requestReplay();
+        } else if (hal::input::wasPressed(hal::input::Button::kLetterInWord)) {
+            ESP_LOGI(kTag, "top -> next letter in the word");
             hal::audio::chirp();
-            requestNextLetter();
+            requestNextLetterInWord();
         }
 
         Message m{};
@@ -337,8 +389,15 @@ void run() {
 
         if (now - s_last_activity_us >
             static_cast<int64_t>(kIdleSleepSec) * 1000000) {
-            goToSleep("no activity for 15 minutes");
-            continue;
+            if (!kSleepWhileUsbConnected && usb_serial_jtag_is_connected()) {
+                // Do not yank the serial port out from under a developer.
+                ESP_LOGD(kTag, "idle timeout reached but USB is attached; "
+                               "deferring sleep");
+                noteActivity();
+            } else {
+                goToSleep("no activity for 15 minutes");
+                continue;
+            }
         }
 
         if (s_deck_ok &&
@@ -352,6 +411,7 @@ void run() {
 
 void requestNextCard()   { post(Message{Req::kNextCard, 0, 0}); }
 void requestNextLetter() { post(Message{Req::kNextLetter, 0, 0}); }
+void requestNextLetterInWord() { post(Message{Req::kNextLetterInWord, 0, 0}); }
 void requestReplay()     { post(Message{Req::kReplay, 0, 0}); }
 void requestRepaint()    { post(Message{Req::kRepaint, 0, 0}); }
 void requestStatusDump() { post(Message{Req::kStatusDump, 0, 0}); }

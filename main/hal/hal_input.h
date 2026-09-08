@@ -26,13 +26,13 @@ namespace hal::input {
 /// sources, so BOTH kCycleA and kCycleB advance to the next card. That way
 /// the two "cycle" buttons behave as asked no matter how they map, and the
 /// third gets replay. Use the `btn` console command to identify them.
-/// Logical roles. Physical mapping was confirmed on hardware:
-///   GPIO1  = the TOP button        -> kLetter  (step to the next letter)
-///   GPIO9  = upper side button     -> kCardA   (random next card)
-///   GPIO10 = the other side button -> kCardB   (random next card)
+/// Logical roles. Physical mapping confirmed on hardware:
+///   GPIO10 = UPPER side button -> kNextCard
+///   GPIO9  = LOWER side button -> kRepeat
+///   GPIO1  = TOP button, in the middle of the title bar -> kLetterInWord
 /// The fourth button (lowest on the side) is PWR_KEY, wired to the PMIC as
 /// the power/wake key, and is not readable as a GPIO.
-enum class Button : uint8_t { kCardA = 0, kCardB = 1, kLetter = 2, kCount = 3 };
+enum class Button : uint8_t { kNextCard = 0, kRepeat = 1, kLetterInWord = 2, kCount = 3 };
 
 void init();
 

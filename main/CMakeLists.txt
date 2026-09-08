@@ -29,6 +29,7 @@ idf_component_register(
         driver
         esp_driver_gpio
         esp_driver_i2s
+        esp_driver_usb_serial_jtag
         esp_driver_spi
         esp_driver_sdspi
         esp_timer

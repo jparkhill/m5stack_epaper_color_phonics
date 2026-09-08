@@ -28,6 +28,12 @@ char s_stats[80] = {0};
 char s_base_dir[96] = {0};
 uint8_t s_per_letter[26] = {0};
 
+// Absolute paths to the 26 shared letter clips, from the manifest's
+// "letters" array. Empty string means the manifest did not supply one.
+char s_letter_audio[26][112] = {};
+
+Focus s_focus{0, 0, 'A'};
+
 bool fileExists(const char* path) {
     struct stat st{};
     return stat(path, &st) == 0 && st.st_size > 0;
@@ -176,6 +182,32 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
         ESP_LOGI(kTag, "manifest voice: %s", voice->valuestring);
     }
 
+    // --- v2: the shared per-letter clips ---
+    const cJSON* letters = cJSON_GetObjectItemCaseSensitive(root, "letters");
+    int n_letter_clips = 0;
+    if (cJSON_IsArray(letters)) {
+        const cJSON* li = nullptr;
+        cJSON_ArrayForEach(li, letters) {
+            const cJSON* j_l = cJSON_GetObjectItemCaseSensitive(li, "letter");
+            const cJSON* j_a = cJSON_GetObjectItemCaseSensitive(li, "audio");
+            if (!cJSON_IsString(j_l) || !cJSON_IsString(j_a)) continue;
+            const int idx = letterIndex(j_l->valuestring[0]);
+            if (idx < 0) continue;
+            joinPath(s_letter_audio[idx], sizeof(s_letter_audio[idx]),
+                     j_a->valuestring);
+            if (verify_assets && !fileExists(s_letter_audio[idx])) {
+                ESP_LOGW(kTag, "letter clip missing: %s", s_letter_audio[idx]);
+                s_letter_audio[idx][0] = '\0';
+                continue;
+            }
+            ++n_letter_clips;
+        }
+        ESP_LOGI(kTag, "%d/26 shared letter clips available", n_letter_clips);
+    } else {
+        ESP_LOGW(kTag, "manifest has no \"letters\" array -- stepping through "
+                       "the letters of a word will be silent");
+    }
+
     const cJSON* arr = cJSON_GetObjectItemCaseSensitive(root, "cards");
     if (!cJSON_IsArray(arr)) {
         ESP_LOGE(kTag, "manifest has no \"cards\" array");
@@ -252,20 +284,21 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
     ESP_LOGI(kTag, "manifest added %u card(s) on top of %u built-in(s)",
              (unsigned)(s_count - before), (unsigned)before);
 
-    size_t letters = 0;
+    size_t letters_with_cards = 0;
     for (const uint8_t n : s_per_letter) {
-        if (n > 0) ++letters;
+        if (n > 0) ++letters_with_cards;
     }
 
     std::snprintf(s_stats, sizeof(s_stats), "%u cards, %u letters%s",
-                  (unsigned)s_count, (unsigned)letters,
+                  (unsigned)s_count, (unsigned)letters_with_cards,
                   s_dropped ? " (some dropped)" : "");
 
     reshuffle();
     s_loaded = true;
 
     ESP_LOGI(kTag, "loaded %u cards across %u letters (%u dropped)",
-             (unsigned)s_count, (unsigned)letters, (unsigned)s_dropped);
+             (unsigned)s_count, (unsigned)letters_with_cards,
+             (unsigned)s_dropped);
 
     // Flag any letter that came up short of the intended five.
     for (int i = 0; i < 26; ++i) {
@@ -302,6 +335,7 @@ const Card* advance() {
     if (!s_loaded || s_count == 0) return nullptr;
     if (s_order_pos >= s_count) reshuffle();
     s_current = s_order[s_order_pos++];
+    resetFocus();
     return &s_cards[s_current];
 }
 
@@ -352,6 +386,7 @@ const Card* advanceRandom() {
         const int pick = bucket[esp_random() % static_cast<uint32_t>(bucket_n)];
         if (pick == s_current && s_count > 1) continue;   // re-roll a repeat
         s_current = pick;
+        resetFocus();
         return &s_cards[pick];
     }
 
@@ -386,11 +421,50 @@ const Card* selectLetter(char letter, int nth) {
         if (letterIndex(s_cards[i].letter) != li) continue;
         if (seen == want) {
             s_current = static_cast<int>(i);
+            resetFocus();
             return &s_cards[i];
         }
         ++seen;
     }
     return nullptr;
+}
+
+Focus currentFocus() { return s_focus; }
+
+void resetFocus() {
+    const Card* c = current();
+    if (c == nullptr) {
+        s_focus = Focus{0, 0, 'A'};
+        return;
+    }
+    s_focus.start = c->span_start;
+    s_focus.len = c->span_len;
+    // Uppercase the letter at the focus so it maps to a letter clip.
+    const char ch = c->display[c->span_start];
+    s_focus.letter = (ch >= 'a' && ch <= 'z') ? static_cast<char>(ch - 32) : ch;
+}
+
+Focus advanceFocus() {
+    const Card* c = current();
+    if (c == nullptr) return s_focus;
+    const int len = static_cast<int>(std::strlen(c->display));
+    if (len <= 0) return s_focus;
+
+    // Step past the whole current grapheme (2 chars for "QU"), then wrap.
+    int next = s_focus.start + (s_focus.len > 0 ? s_focus.len : 1);
+    if (next >= len) next = 0;
+
+    s_focus.start = static_cast<int8_t>(next);
+    s_focus.len = 1;                     // single letters once stepping
+    const char ch = c->display[next];
+    s_focus.letter = (ch >= 'a' && ch <= 'z') ? static_cast<char>(ch - 32) : ch;
+    return s_focus;
+}
+
+const char* letterAudioPath(char letter) {
+    const int idx = letterIndex(letter);
+    if (idx < 0 || s_letter_audio[idx][0] == '\0') return nullptr;
+    return s_letter_audio[idx];
 }
 
 int cardsForLetter(char letter) {

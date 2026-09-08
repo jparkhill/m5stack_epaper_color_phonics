@@ -11,8 +11,8 @@ the word is lowercase. Then the speaker sounds it out:
 
 The status bar across the top shows the date, time, temperature and humidity.
 
-26 letters × 5 words = **130 cards**, all pictures and narration pre-generated
-on the host and written to a microSD card.
+26 letters × 10 words = **260 cards**, all pictures and narration
+pre-generated on the host and written to a microSD card.
 
 ---
 
@@ -45,29 +45,50 @@ writing a widget and giving it a rectangle — see
 ## Buttons
 
 Four buttons: one on top, three on the side. The **lowest side button is
-`PWR_KEY`**, wired to the PMIC — it powers the device on and off and is not
-readable as a GPIO. The other three are:
+`PWR_KEY`**, wired to the PMIC — it powers the device on and off, is not
+readable as a GPIO, and is deliberately unlabelled on screen.
 
 | Button | GPIO | Action | Cost |
 |---|---|---|---|
-| **Either side button** | 9, 10 | Random card: picture + word, narrated | one refresh (~16 s) |
-| **Top button** | 1 | Step to the next letter of the alphabet | one refresh |
+| **Upper side** | 10 | Next card — a random word | one refresh (~16 s) |
+| **Lower side** | 9 | Repeat the current letter + word | none |
+| **Top** (middle of the title bar) | 1 | Next letter **within the current word** | one refresh |
 | `PWR_KEY` | — | Power off / wake | — |
 
-There are no hold or double-press gestures; every button does one thing on a
-single press.
+No hold or double-press gestures; one press, one action. The on-screen hints
+sit next to the buttons they describe — `▲ letter` points up into the title
+bar where the top button is, and `◀ word` / `◀ again` sit in a left gutter at
+the two side buttons' heights. The arrows are drawn as triangles because the
+GFX fonts are ASCII-only and have no arrow glyphs.
+
+### Stepping through a word
+
+The top button moves the taught letter along the current word, so one picture
+teaches every letter in it:
+
+```
+Apple  ->  aPple  ->  apPle  ->  appLe  ->  applE  ->  (wraps)
+```
+
+The highlighted letter is recoloured and its narration changes to match. This
+is why the audio is **split into two clips**: one per letter (26 of them,
+shared by every word) plus one per word. A clip for every (word, letter) pair
+would be ~1,400 recordings; this needs 26 + 260, and the device just plays the
+pair back to back.
+
+Built-in cards are the exception — they carry a single combined clip, because
+embedding all 26 letter clips would cost ~6.5 MB of flash. Stepping a built-in
+word moves the highlight but replays the same audio; per-letter narration
+needs the SD card.
 
 ### How cards are chosen
 
-A side button picks a **random letter**, then a random word for that letter —
-biased so that a word where the taught grapheme is the word's **first letter**
-is chosen **60 %** of the time (`kInitialGraphemeBias` in
-[`main/content/deck.h`](main/content/deck.h)). Initial sounds are the easiest
-to hear, so they should dominate, but medial and final examples (`bUg`, `boX`,
-`siX`) still need to appear. The same card never comes up twice in a row.
-
-The top button is deliberately *not* random: it steps A → B → C so you can
-work through the alphabet in order.
+The upper side button picks a **random letter**, then a random word for it —
+biased so a word whose taught grapheme is the word's **first letter** is
+chosen **60 %** of the time (`kInitialGraphemeBias` in
+[`main/content/deck.h`](main/content/deck.h)). Initial sounds are easiest to
+hear, so they dominate, but medial and final examples (`bUg`, `boX`, `siX`)
+still appear. The same card never comes up twice in a row.
 
 ## Power
 
@@ -86,6 +107,12 @@ sleep rather than crashed.
 Only button presses and console commands count as activity — the idle clock
 repaint deliberately does not, or it would keep the device awake forever.
 
+**The timeout is deferred while a USB host is attached**
+(`kSleepWhileUsbConnected`). Otherwise the device cuts power in the middle of
+a `monitor` session or a flash, the port vanishes, and the board looks
+bricked until someone presses `PWR_KEY`. On battery the timeout applies
+normally, which is the case that matters.
+
 `sleep` on the console triggers the identical path, which is how to test it
 without waiting a quarter of an hour. `stat` reports the countdown.
 
@@ -96,8 +123,9 @@ only when:
 
 | Trigger | What happens |
 |---|---|
-| Either side button, or `next` | Random card + narration, one refresh |
-| Top button, or `letter` | Next letter, one refresh |
+| Upper side button, or `next` | Random card + narration, one refresh |
+| Top button | Next letter within the word, one refresh |
+| `letter` | Jump to the next letter of the alphabet, one refresh |
 | `again` | Narration replays, **no** refresh |
 | `repaint` | Recomposes the same card (picks up a new clock/temperature) |
 | 5 minutes idle | Clock repaint (`kIdleClockRefreshSec`) |
@@ -191,10 +219,28 @@ deliberate: at a normal speaking rate the short vowel sounds run together,
 which is exactly the distinction the device is trying to teach.
 
 The narration names the letter rather than sounding it: *"see makes the kuh
-sound"*, not *"kuh makes the kuh sound"*. Piper phonemises a bare capital
-letter unreliably, so `LETTER_NAMES` in `phonics_data.py` spells each name out
-("A" → `ay`, "C" → `see`, "W" → `double you`). Z is `zee` to match the
-American voice — change that one entry for `zed`.
+sound"*. Getting that right needed two tables, both **verified against
+Piper's own phonemizer rather than by ear**, because the failures are silent —
+the audio sounds confident and says the wrong thing:
+
+| Written | espeak actually says | |
+|---|---|---|
+| `ay` | /ˈaɪ/ — "eye" | wrong name for **A**; use `eigh` |
+| `eff` | /ɛf ɛf ɛf/ — "eff eff eff" | wrong name for **F**; use `ef` |
+| `fff` | /ɛf ɛf ɛf/ | says the *name* three times, not the /f/ sound |
+| `eh` | /eɪ/ — "ay" | not short-e |
+| `ih` | /aɪ/ — "eye" | not short-i |
+| `ks` | /keɪ ɛs/ — "kay-ess" | not /ks/ |
+
+A bare vowel letter is *always* read as that letter's name, so an isolated
+short vowel cannot be written as text at all. The fix is espeak's inline
+phoneme markup, which passes IPA through verbatim: `SOUNDS` in
+`phonics_data.py` holds `"A": "[[æ]]"`, `"F": "[[f]]"`, `"X": "[[ks]]"` and so
+on. Stops keep a `-uh` syllable (`[[bʌ]]`, `[[kʌ]]`) because a plosive with no
+following vowel is essentially inaudible — which is also what phonics
+programmes teach.
+
+Z is `zee` to match the American voice; change that one entry for `zed`.
 
 That voice has 904 speakers, so the speaker id is pinned; `--audition` renders
 one line across several speakers so you can pick by ear:

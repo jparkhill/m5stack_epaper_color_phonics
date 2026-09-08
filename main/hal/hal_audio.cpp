@@ -64,10 +64,11 @@ uint32_t s_rate = 0;
 uint8_t s_volume = kDefaultVolume;
 int16_t* s_chunk = nullptr;          // kChunkFrames * 2 samples
 
-// PCM scratch for file playback (PSRAM).
-int16_t* s_pcm = nullptr;
-size_t s_pcm_cap = 0;
-size_t s_pcm_len = 0;          // bytes of the currently preloaded clip
+// PCM scratch for file playback (PSRAM), one buffer per slot.
+constexpr size_t kSlots = 2;
+int16_t* s_pcm[kSlots] = {nullptr, nullptr};
+size_t s_pcm_cap[kSlots] = {0, 0};
+size_t s_pcm_len[kSlots] = {0, 0};
 
 // --- async playback plumbing ---
 struct PlayReq {
@@ -277,15 +278,17 @@ bool parseWavMemory(const unsigned char* d, unsigned int n, WavInfo* out) {
     return true;
 }
 
-bool ensurePcm(size_t bytes) {
-    if (bytes <= s_pcm_cap) return true;
-    void* p = heap_caps_realloc(s_pcm, bytes, MALLOC_CAP_SPIRAM);
+bool ensurePcm(size_t slot, size_t bytes) {
+    if (slot >= kSlots) return false;
+    if (bytes <= s_pcm_cap[slot]) return true;
+    void* p = heap_caps_realloc(s_pcm[slot], bytes, MALLOC_CAP_SPIRAM);
     if (p == nullptr) {
-        ESP_LOGE(kTag, "PSRAM alloc of %u bytes failed", (unsigned)bytes);
+        ESP_LOGE(kTag, "PSRAM alloc of %u bytes for slot %u failed",
+                 (unsigned)bytes, (unsigned)slot);
         return false;
     }
-    s_pcm = static_cast<int16_t*>(p);
-    s_pcm_cap = bytes;
+    s_pcm[slot] = static_cast<int16_t*>(p);
+    s_pcm_cap[slot] = bytes;
     return true;
 }
 
@@ -366,7 +369,7 @@ esp_err_t init() {
         ESP_LOGW(kTag, "channel did not enable at init; will retry on first clip");
     }
 
-    s_play_q = xQueueCreate(2, sizeof(PlayReq));
+    s_play_q = xQueueCreate(4, sizeof(PlayReq));   // letter + word, plus slack
     if (s_play_q == nullptr) {
         ESP_LOGE(kTag, "could not create the playback queue");
         return ESP_ERR_NO_MEM;
@@ -423,12 +426,13 @@ bool playWavFile(const char* path) {
         std::fclose(f);
         return false;
     }
-    if (!ensurePcm(static_cast<size_t>(size))) {
+    const size_t slot = static_cast<size_t>(Slot::kWord);
+    if (!ensurePcm(slot, static_cast<size_t>(size))) {
         std::fclose(f);
         return false;
     }
     // Read the whole clip before touching the panel-shared SPI bus again.
-    const size_t got = std::fread(s_pcm, 1, static_cast<size_t>(size), f);
+    const size_t got = std::fread(s_pcm[slot], 1, static_cast<size_t>(size), f);
     std::fclose(f);
     if (got == 0) {
         ESP_LOGE(kTag, "read 0 bytes from %s", path);
@@ -436,7 +440,7 @@ bool playWavFile(const char* path) {
     }
 
     WavInfo info{};
-    const auto* bytes = reinterpret_cast<const unsigned char*>(s_pcm);
+    const auto* bytes = reinterpret_cast<const unsigned char*>(s_pcm[slot]);
     if (!parseWavMemory(bytes, static_cast<unsigned int>(got), &info)) return false;
 
     const int16_t* pcm = reinterpret_cast<const int16_t*>(bytes + info.data_offset);
@@ -448,11 +452,13 @@ bool playWavFile(const char* path) {
     return pushPcm(pcm, frames, info.channels, info.sample_rate);
 }
 
-bool preloadWavFile(const char* path) {
+bool preloadWavFile(Slot slot, const char* path) {
     if (!s_available || path == nullptr) return false;
+    const size_t i = static_cast<size_t>(slot);
+    if (i >= kSlots) return false;
 
-    // Never touch the shared buffer while the task is reading from it.
-    if (!waitIdle(5000)) {
+    // Never overwrite a buffer the audio task is still reading from.
+    if (!waitIdle(8000)) {
         ESP_LOGW(kTag, "preload: previous clip still playing, stopping it");
         stop();
     }
@@ -465,27 +471,32 @@ bool preloadWavFile(const char* path) {
     std::fseek(f, 0, SEEK_END);
     const long size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
-    if (size <= 44 || !ensurePcm(static_cast<size_t>(size))) {
+    if (size <= 44 || !ensurePcm(i, static_cast<size_t>(size))) {
         std::fclose(f);
         return false;
     }
-    const size_t got = std::fread(s_pcm, 1, static_cast<size_t>(size), f);
+    const size_t got = std::fread(s_pcm[i], 1, static_cast<size_t>(size), f);
     std::fclose(f);
     if (got == 0) {
         ESP_LOGE(kTag, "read 0 bytes from %s", path);
         return false;
     }
-    s_pcm_len = got;
-    ESP_LOGD(kTag, "preloaded %u bytes from %s", (unsigned)got, path);
+    s_pcm_len[i] = got;
+    ESP_LOGD(kTag, "slot %u preloaded %u bytes from %s", (unsigned)i,
+             (unsigned)got, path);
     return true;
 }
 
-bool playPreloadedAsync() {
-    if (!s_available || s_play_q == nullptr || s_pcm_len == 0) return false;
+bool playSlotAsync(Slot slot, const char* label) {
+    const size_t i = static_cast<size_t>(slot);
+    if (!s_available || s_play_q == nullptr || i >= kSlots ||
+        s_pcm_len[i] == 0) {
+        return false;
+    }
     PlayReq req{};
-    req.data = reinterpret_cast<const unsigned char*>(s_pcm);
-    req.len = static_cast<unsigned int>(s_pcm_len);
-    std::snprintf(req.label, sizeof(req.label), "preloaded");
+    req.data = reinterpret_cast<const unsigned char*>(s_pcm[i]);
+    req.len = static_cast<unsigned int>(s_pcm_len[i]);
+    std::snprintf(req.label, sizeof(req.label), "%s", label ? label : "slot");
     return xQueueSend(s_play_q, &req, pdMS_TO_TICKS(50)) == pdTRUE;
 }
 
@@ -552,11 +563,18 @@ void tone(float freq_hz, uint32_t ms) {
     }
 }
 
-void chirp() { tone(1200.0f, 70); }
+void chirp() {
+    // A rising major third rather than a flat blip -- it reads as "here we
+    // go" instead of "error", which matters on a toy for children.
+    tone(784.0f, 55);    // G5
+    tone(988.0f, 70);    // B5
+}
 
 void bootChime() {
-    tone(880.0f, 110);
-    tone(1320.0f, 130);
+    // Cheerful rising arpeggio: C-E-G.
+    tone(523.0f, 100);
+    tone(659.0f, 100);
+    tone(784.0f, 150);
 }
 
 void diagnose() {

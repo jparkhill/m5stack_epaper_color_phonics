@@ -44,6 +44,15 @@ constexpr uint32_t kSensorSampleSec = 30;
 /// clock repaint does not, or the device would never sleep.
 constexpr uint32_t kIdleSleepSec = 15 * 60;
 
+/// Whether to auto power-off while a USB host is attached.
+///
+/// Defaults to false. With it true, the device would cut power in the middle
+/// of a `idf.py monitor` session or a flash -- the port simply vanishes and
+/// the board looks bricked until someone presses PWR_KEY. A device on a USB
+/// cable is also, in practice, one that is being worked on or charged. On
+/// battery the timeout applies normally, which is the case that matters.
+constexpr bool kSleepWhileUsbConnected = false;
+
 esp_err_t init();
 
 /// Main loop. Does not return.
@@ -52,6 +61,10 @@ esp_err_t init();
 // --- Requests from the console task (thread-safe, queued) ------------------
 void requestNextCard();
 void requestNextLetter();
+
+/// Step the taught letter to the next character of the CURRENT word:
+/// Apple -> aPple -> apPle -> appLe -> applE, wrapping at the end.
+void requestNextLetterInWord();
 void requestReplay();
 void requestRepaint();
 void requestCard(char letter, int nth);

@@ -17,12 +17,17 @@ constexpr const char* kTag = "input";
 //   index 0 = kTop, 1 = kMiddle, 2 = kBottom
 //   value  = 0 -> BtnA (GPIO9), 1 -> BtnB (GPIO10), 2 -> BtnC (GPIO1)
 // ---------------------------------------------------------------------------
-constexpr uint8_t kLogicalToPhysical[3] = {0, 1, 2};
+// index 0 = kNextCard, 1 = kRepeat, 2 = kLetterInWord
+// value 0 -> BtnA (GPIO9), 1 -> BtnB (GPIO10), 2 -> BtnC (GPIO1)
+//
+// kNextCard is the UPPER side button = GPIO10 = BtnB, and kRepeat is the
+// LOWER one = GPIO9 = BtnA -- hence the swap of the first two entries.
+constexpr uint8_t kLogicalToPhysical[3] = {1, 0, 2};
 
 constexpr const char* kLabels[3] = {
-    "side (BtnA/GPIO9) -> next card",
-    "side (BtnB/GPIO10) -> next card",
-    "top (BtnC/GPIO1) -> next letter",
+    "upper side (BtnB/GPIO10) -> next card",
+    "lower side (BtnA/GPIO9) -> repeat",
+    "top (BtnC/GPIO1) -> next letter in word",
 };
 
 char s_snapshot[64];
@@ -48,8 +53,8 @@ void init() {
     ESP_LOGI(kTag, "buttons: GPIO%d, GPIO%d, GPIO%d (active-low). The 4th "
                    "(lowest side) is the PMIC power button and is not a GPIO.",
              pins::kBtnA, pins::kBtnB, pins::kBtnC);
-    ESP_LOGI(kTag, "GPIO9/GPIO10 (side) = next card; GPIO1 (top) = next letter. "
-                   "PWR_KEY is the PMIC power/wake key.");
+    ESP_LOGI(kTag, "GPIO10 upper side = next card | GPIO9 lower side = repeat "
+                   "| GPIO1 top = next letter in word | PWR_KEY = power");
 }
 
 void update() { M5.update(); }

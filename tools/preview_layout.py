@@ -193,11 +193,34 @@ def main():
     draw_outlined_runs(draw, runs, wx + ww // 2, wy + wh // 2, font,
                        rgb(t["kWordOutline"]), radius)
 
-    # --- footer
-    f_foot = ImageFont.truetype(FONT_REG, 15)
-    draw.text((W // 2, t["kFooterY"] + t["kFooterH"] // 2),
-              "TOP: new word    MID: next letter    LOW: say it again",
-              font=f_foot, fill=rgb(t["kInk"]), anchor="mm")
+    # --- button hints with arrows (no footer any more) ---
+    f_hint = ImageFont.truetype(FONT_BOLD, 15)
+    ink = rgb(t["kInk"])
+    arrow = t.get("kArrowSize", 7)
+
+    def tri_up(cx, cy):
+        draw.polygon([(cx, cy - arrow), (cx - arrow, cy + arrow),
+                      (cx + arrow, cy + arrow)], fill=ink)
+
+    def tri_left(cx, cy):
+        draw.polygon([(cx - arrow, cy), (cx + arrow, cy - arrow),
+                      (cx + arrow, cy + arrow)], fill=ink)
+
+    # top button: arrow points up into the middle of the title bar
+    cy = t["kHintTopY"] + t["kHintTopH"] // 2
+    label = "letter"
+    lw = draw.textlength(label, font=f_hint)
+    total = lw + 2 * arrow + 6
+    x0 = (W - total) / 2
+    tri_up(x0 + arrow, cy)
+    draw.text((x0 + 2 * arrow + 6, cy), label, font=f_hint, fill=ink, anchor="lm")
+
+    # side buttons: arrows point left at each button's own height
+    for text_, y in (("word", t["kHintSide1Y"] + t["kHintRowH"] // 2),
+                     ("again", t["kHintSide2Y"] + t["kHintRowH"] // 2)):
+        tri_left(t["kGutterX"] + 2 + arrow, y)
+        draw.text((t["kGutterX"] + 2 * arrow + 6, y), text_, font=f_hint,
+                  fill=ink, anchor="lm")
 
     if not args.no_dither:
         img = dither_to_palette_fast(img)
@@ -210,7 +233,7 @@ def main():
     print(f"regions   : status {t['kStatusW']}x{t['kStatusH']} @{t['kStatusX']},{t['kStatusY']}")
     print(f"            image  {iw}x{ih} @{ix},{iy}")
     print(f"            word   {ww}x{wh} @{wx},{wy}")
-    print(f"            footer {t['kFooterW']}x{t['kFooterH']} @{t['kFooterX']},{t['kFooterY']}")
+    print(f"            gutter {t['kGutterW']}px wide for the side hints")
     print(f"wrote     : {args.out}")
     return 0
 

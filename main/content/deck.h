@@ -49,6 +49,33 @@ struct Card {
     bool isBuiltin() const { return image_data != nullptr; }
 };
 
+/// Which letter of the displayed word is currently being taught, and what to
+/// highlight for it.
+///
+/// A card starts focused on its own grapheme (the `span` from the manifest),
+/// but the top button steps the focus through every letter of the word, so
+/// "Apple" can teach A, then P, then P, then L, then E. That is why the
+/// narration is split into a per-letter clip plus a per-word clip -- see
+/// tools/phonics_data.py.
+struct Focus {
+    int8_t start;   // offset into Card::display
+    int8_t len;     // 1 while stepping; may be 2 for a digraph like "QU"
+    char letter;    // uppercase letter being taught at this position
+};
+
+Focus currentFocus();
+
+/// Reset the focus to the card's own grapheme.
+void resetFocus();
+
+/// Step the focus to the next letter of the word, wrapping at the end.
+/// Returns the new focus.
+Focus advanceFocus();
+
+/// Path to the shared clip for `letter`, or nullptr if the manifest has none.
+/// Built-in cards return nullptr and use their embedded blob instead.
+const char* letterAudioPath(char letter);
+
 /// Allocate the card table and register the firmware's built-in cards.
 /// Call before load(); the built-ins stay in the rotation even when an SD
 /// deck loads on top of them.

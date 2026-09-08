@@ -45,13 +45,17 @@ bool playWavFile(const char* path);
 // BEFORE the refresh starts -- never streamed off the card during it. Hence
 // the two-step preload/play split.
 
-/// Read a WAV off the filesystem into PSRAM. Call before starting a refresh.
-/// Blocks (SD access), but only for the read.
-bool preloadWavFile(const char* path);
+/// Two preload slots, because a card's narration is TWO clips played back to
+/// back: the shared per-letter clip, then the per-word clip. Both must be off
+/// the SD card and in PSRAM before the panel refresh starts, since the card
+/// and the panel share SPI2.
+enum class Slot : uint8_t { kLetter = 0, kWord = 1, kCount = 2 };
 
-/// Start playing the most recently preloaded clip on the audio task and
-/// return immediately.
-bool playPreloadedAsync();
+/// Read a WAV off the filesystem into the given slot. Blocks for the read.
+bool preloadWavFile(Slot slot, const char* path);
+
+/// Queue a preloaded slot for playback and return immediately.
+bool playSlotAsync(Slot slot, const char* label);
 
 /// Start playing an in-flash blob on the audio task and return immediately.
 bool playMemoryAsync(const unsigned char* data, unsigned int len, const char* label);

@@ -81,7 +81,12 @@ void CardView::drawWord(M5GFX& g) {
     ESP_LOGD(kTag, "drawWord: scale=%.2f h=%dpx w=%dpx in box %dx%d", pick.size,
              static_cast<int>(g.fontHeight()), static_cast<int>(g.textWidth(card_->display)),
              static_cast<int>(avail_w), static_cast<int>(avail_h));
-    text::drawWordWithAccent(g, card_->display, card_->span_start, card_->span_len,
+    // focus_len_ of 0 means "nobody set a focus", so fall back to the card's
+    // own grapheme.
+    const int8_t hl_start = focus_len_ > 0 ? focus_start_ : card_->span_start;
+    const int8_t hl_len = focus_len_ > 0 ? focus_len_ : card_->span_len;
+
+    text::drawWordWithAccent(g, card_->display, hl_start, hl_len,
                              wb.centerX(), wb.centerY(), pick, theme::kWordFill,
                              accent, theme::kWordOutline,
                              theme::kWordOutlineRadius);
