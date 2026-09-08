@@ -76,10 +76,18 @@ shared by every word) plus one per word. A clip for every (word, letter) pair
 would be ~1,400 recordings; this needs 26 + 260, and the device just plays the
 pair back to back.
 
-Built-in cards are the exception — they carry a single combined clip, because
-embedding all 26 letter clips would cost ~6.5 MB of flash. Stepping a built-in
-word moves the highlight but replays the same audio; per-letter narration
-needs the SD card.
+**All 26 letter clips are embedded in the firmware too**, so this works
+identically with no SD card inserted. They were originally left out to save
+flash, with built-in cards carrying one combined clip — which made the top
+button look broken: the highlight moved but the narration kept naming the
+card's *original* letter. 26 clips cost ~4.2 MB of a 15 MB partition, a far
+better trade than a button that silently does the wrong thing.
+
+**Stepping does not refresh the panel immediately.** A refresh is ~16 s and
+the only visual change is which letter is coloured, so walking through
+"apple" would take 80 seconds. Instead the audio plays at once and the
+repaint is deferred until `kLetterStepRepaintSec` (4 s) after you stop
+stepping — several steps cost one refresh, not one each.
 
 ### How cards are chosen
 
@@ -144,6 +152,7 @@ only when:
 | Top button | Next letter within the word, one refresh |
 | `letter` | Jump to the next letter of the alphabet, one refresh |
 | `again` | Narration replays, **no** refresh |
+| `step` | Step the taught letter (same as the top button) |
 | `repaint` | Recomposes the same card (picks up a new clock/temperature) |
 | 5 minutes idle | Clock repaint (`kIdleClockRefreshSec`) |
 

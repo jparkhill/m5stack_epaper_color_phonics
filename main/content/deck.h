@@ -138,6 +138,11 @@ int cardsForLetter(char letter);
 /// rather than run at boot.
 void verifyAllAssets();
 
+/// Look up a shared letter clip compiled into the firmware. Lets the taught
+/// letter be stepped through a word with no microSD card present.
+bool embeddedLetterClip(char letter, const unsigned char** data,
+                        unsigned int* len);
+
 size_t builtinCardCount();
 bool fillBuiltinCard(size_t index, Card* out);
 

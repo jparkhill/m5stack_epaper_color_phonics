@@ -76,6 +76,45 @@ void saveSleepSetting() {
 /// Anything the user did. Resets the idle timeout.
 void noteActivity() { s_last_activity_us = esp_timer_get_time(); }
 
+int64_t s_pending_repaint_us = 0;   // 0 = nothing pending
+
+/// Queue the narration for `card` at the current focus: the shared per-letter
+/// clip, then the word clip.
+///
+/// Built-in cards resolve BOTH halves out of flash, exactly like SD cards do
+/// from the card. They used to play one combined clip, which meant stepping
+/// the letter kept narrating the card's original letter -- the top button
+/// looked broken.
+bool queueNarration(const content::Card* card) {
+    if (card == nullptr) return false;
+    const content::Focus focus = content::currentFocus();
+    bool any = false;
+
+    char label[8];
+    std::snprintf(label, sizeof(label), "%c", focus.letter);
+
+    if (card->isBuiltin()) {
+        const unsigned char* ldata = nullptr;
+        unsigned int llen = 0;
+        if (content::embeddedLetterClip(focus.letter, &ldata, &llen)) {
+            any |= hal::audio::playMemoryAsync(ldata, llen, label);
+        }
+        any |= hal::audio::playMemoryAsync(card->audio_data, card->audio_len,
+                                           card->display);
+        return any;
+    }
+
+    const char* letter_clip = content::letterAudioPath(focus.letter);
+    if (letter_clip != nullptr &&
+        hal::audio::preloadWavFile(hal::audio::Slot::kLetter, letter_clip)) {
+        any |= hal::audio::playSlotAsync(hal::audio::Slot::kLetter, label);
+    }
+    if (hal::audio::preloadWavFile(hal::audio::Slot::kWord, card->audio)) {
+        any |= hal::audio::playSlotAsync(hal::audio::Slot::kWord, card->display);
+    }
+    return any;
+}
+
 void goToSleep(const char* why) {
     ESP_LOGW(kTag, "sleeping: %s", why);
     ESP_LOGW(kTag, "the current card stays on screen -- e-paper holds its "
@@ -137,37 +176,13 @@ void showCard(const content::Card* card, bool speak) {
     // and the panel share SPI2 -- hence preload-then-play rather than
     // streaming during the refresh.
     // Narration is TWO clips played back to back: the shared per-letter clip
-    // for whichever letter is in focus, then the word clip. That split is
-    // what makes "step through every letter of the word" affordable -- see
-    // tools/phonics_data.py.
+    // for whichever letter is in focus, then the word clip.
     //
-    // Both reads must finish BEFORE the refresh starts, because the SD card
-    // and the panel share SPI2.
+    // Any SD read must finish BEFORE the refresh starts, because the card and
+    // the panel share SPI2 -- hence preload-then-play rather than streaming.
     bool narrating = false;
     if (speak && card != nullptr) {
-        const content::Focus focus = content::currentFocus();
-        if (card->isBuiltin()) {
-            narrating = hal::audio::playMemoryAsync(card->audio_data,
-                                                    card->audio_len,
-                                                    card->display);
-        } else {
-            const char* letter_clip = content::letterAudioPath(focus.letter);
-            const bool have_letter =
-                letter_clip != nullptr &&
-                hal::audio::preloadWavFile(hal::audio::Slot::kLetter, letter_clip);
-            const bool have_word =
-                hal::audio::preloadWavFile(hal::audio::Slot::kWord, card->audio);
-
-            if (have_letter) {
-                char lbl[8];
-                std::snprintf(lbl, sizeof(lbl), "%c", focus.letter);
-                narrating |= hal::audio::playSlotAsync(hal::audio::Slot::kLetter, lbl);
-            }
-            if (have_word) {
-                narrating |= hal::audio::playSlotAsync(hal::audio::Slot::kWord,
-                                                       card->display);
-            }
-        }
+        narrating = queueNarration(card);
         if (!narrating) {
             ESP_LOGW(kTag, "narration failed for %s", card->id);
         } else {
@@ -209,21 +224,7 @@ void replayAudio() {
     }
     ESP_LOGI(kTag, "replaying %s (no panel refresh)", c->id);
     hal::power::ledSet(hal::power::Led::kSpeaking);
-    const content::Focus focus = content::currentFocus();
-    if (c->isBuiltin()) {
-        hal::audio::playMemoryAsync(c->audio_data, c->audio_len, c->display);
-    } else {
-        const char* letter_clip = content::letterAudioPath(focus.letter);
-        if (letter_clip != nullptr &&
-            hal::audio::preloadWavFile(hal::audio::Slot::kLetter, letter_clip)) {
-            char lbl[8];
-            std::snprintf(lbl, sizeof(lbl), "%c", focus.letter);
-            hal::audio::playSlotAsync(hal::audio::Slot::kLetter, lbl);
-        }
-        if (hal::audio::preloadWavFile(hal::audio::Slot::kWord, c->audio)) {
-            hal::audio::playSlotAsync(hal::audio::Slot::kWord, c->display);
-        }
-    }
+    queueNarration(c);
     hal::audio::waitIdle(20000);
     hal::power::ledSet(hal::power::Led::kIdle);
 }
@@ -298,6 +299,7 @@ void dumpStatus() {
 void handle(const Message& m) {
     switch (m.req) {
         case Req::kNextCard:
+            s_pending_repaint_us = 0;
             if (s_deck_ok) showCard(content::advanceRandom(), true);
             break;
         case Req::kNextLetter:
@@ -306,8 +308,19 @@ void handle(const Message& m) {
         case Req::kNextLetterInWord:
             if (s_deck_ok) {
                 const content::Focus f = content::advanceFocus();
-                ESP_LOGI(kTag, "focus -> '%c' at offset %d", f.letter, f.start);
-                showCard(content::current(), true);
+                const content::Card* c = content::current();
+                ESP_LOGI(kTag, "focus -> '%c' at offset %d of \"%s\"", f.letter,
+                         f.start, c ? c->display : "?");
+
+                // Speak immediately and do NOT refresh here. A refresh costs
+                // ~16s and the only visual change is which letter is
+                // coloured, so stepping through a word would take a minute or
+                // more. The repaint is deferred until the stepping stops.
+                hal::power::ledSet(hal::power::Led::kSpeaking);
+                if (!queueNarration(c)) {
+                    ESP_LOGW(kTag, "letter narration failed");
+                }
+                s_pending_repaint_us = esp_timer_get_time();
             }
             break;
         case Req::kReplay:
@@ -423,6 +436,26 @@ void run() {
         }
 
         const int64_t now = esp_timer_get_time();
+
+        // Deferred repaint after letter-stepping settles, so the highlight
+        // catches up without charging a 16s refresh per press.
+        if (s_pending_repaint_us != 0 &&
+            now - s_pending_repaint_us >
+                static_cast<int64_t>(kLetterStepRepaintSec) * 1000000 &&
+            !hal::audio::isPlaying()) {
+            s_pending_repaint_us = 0;
+            ESP_LOGI(kTag, "letter-step settled; repainting to move the "
+                           "highlight");
+            const content::Card* c = content::current();
+            const content::Focus f = content::currentFocus();
+            s_screen.cardView().setCard(c);
+            s_screen.cardView().setFocus(f.start, f.len);
+            hal::power::ledSet(hal::power::Led::kBusy);
+            s_screen.present(hal::display::RefreshMode::kImage);
+            s_last_clock_refresh_us = esp_timer_get_time();
+            hal::power::ledSet(hal::power::Led::kIdle);
+            continue;
+        }
 
         if (now - s_last_sensor_us > static_cast<int64_t>(kSensorSampleSec) * 1000000) {
             hal::sensors::refresh();

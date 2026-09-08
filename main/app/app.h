@@ -63,6 +63,16 @@ constexpr bool kSleepWhileUsbConnected = false;
 /// and cannot be woken.
 constexpr uint8_t kMinBatteryPercentToSleep = 20;
 
+/// Seconds of no further letter-steps before the panel is repainted to move
+/// the highlight.
+///
+/// Stepping the taught letter used to force a full ~16s refresh per press,
+/// which made walking through "apple" an 80-second exercise -- and the only
+/// visual change is which letter is coloured. So the audio now plays
+/// immediately and the repaint is deferred until the child stops pressing.
+/// Sound is instant; the highlight catches up shortly after.
+constexpr uint32_t kLetterStepRepaintSec = 4;
+
 esp_err_t init();
 
 /// Main loop. Does not return.

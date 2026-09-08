@@ -44,6 +44,15 @@ int cmdLetter(int, char**) {
     return 0;
 }
 
+int cmdStep(int, char**) {
+    std::printf("queued: step the taught letter to the next character of the "
+                "word\n");
+    std::printf("(audio is immediate; the highlight repaints a few seconds "
+                "after you stop)\n");
+    requestNextLetterInWord();
+    return 0;
+}
+
 int cmdAgain(int, char**) {
     std::printf("queued: replay narration\n");
     requestReplay();
@@ -286,6 +295,8 @@ esp_err_t start() {
     reg("stat", "Full status dump: uptime, deck, sensors, RTC, SD, heap", cmdStat);
     reg("next", "Show the next card (picture + word + narration)", cmdNext);
     reg("letter", "Jump to the first card of the next letter", cmdLetter);
+    reg("step", "Step the taught letter within the current word (top button)",
+        cmdStep);
     reg("again", "Replay the current narration (no panel refresh)", cmdAgain);
     reg("repaint", "Force a full repaint (updates the clock)", cmdRepaint);
     reg("card", "card <A-Z> [index] -- show a specific card", cmdCard);

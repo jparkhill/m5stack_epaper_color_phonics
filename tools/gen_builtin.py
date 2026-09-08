@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Regenerate the two cards embedded in the firmware image.
+Regenerate the assets embedded in the firmware image.
 
-Built-in cards carry ONE combined clip (letter narration + word narration
-concatenated) rather than the split pair the SD deck uses, because embedding
-all 26 letter clips would cost ~6.5MB of flash. The practical consequence is
-that stepping the taught letter through a built-in word replays the same
-audio -- per-letter stepping needs the SD card. The built-ins exist so the
-device is testable with no card at all, and that trade is worth it.
+Two built-in cards (picture + word clip) plus ALL 26 shared letter clips, so
+the device behaves identically with no microSD inserted -- including stepping
+the taught letter through the word.
+
+The letter clips were originally left out to save flash, and built-in cards
+carried one combined clip instead. That made the top button appear broken:
+stepping moved the on-screen highlight but kept narrating the card's original
+letter. 26 clips cost ~4MB of a 15MB partition, which is a much better trade
+than a button that silently does the wrong thing.
 
     tools/.venv/bin/python tools/gen_builtin.py
 """
@@ -19,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gen_assets import Narrator, PIPER_VOICE, PIPER_VOICE_FALLBACK  # noqa: E402
 from phonics_data import (build_cards, letter_narration,  # noqa: E402
-                          word_narration)
+                          word_narration, LETTERS)
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets" / "phonics"
@@ -33,26 +36,43 @@ def main():
     voice = PIPER_VOICE if PIPER_VOICE.exists() else PIPER_VOICE_FALLBACK
     n = Narrator(voice)
     cards = {c["id"]: c for c in build_cards()}
+    EMBED.mkdir(parents=True, exist_ok=True)
+    (EMBED / "letters").mkdir(parents=True, exist_ok=True)
 
+    import wave
+    total = 0
+
+    # --- the two cards: picture + word clip (spelling only) ---
     for letter, word in BUILTINS:
         card = cards[f"{letter.lower()}_{word}"]
 
-        # One utterance, so the two halves are prosodically joined rather than
-        # sounding like two recordings butted together.
-        text = f"{letter_narration(letter)} {word_narration(word)}"
         dest = EMBED / f"{word}.wav"
-        n.synth(text, dest)
+        n.synth(word_narration(word), dest)
 
         src_png = ASSETS / card["image"]
         if not src_png.exists():
             sys.exit(f"missing {src_png}; run gen_assets.py first")
         shutil.copy(src_png, EMBED / f"{word}.png")
 
-        import wave
         with wave.open(str(dest), "rb") as w:
             dur = w.getnframes() / w.getframerate()
-        print(f"  {word:6} {dur:5.2f}s  {dest.stat().st_size:>7} B")
-        print(f"         \"{text}\"")
+        total += dest.stat().st_size
+        print(f"  {word:6} {dur:5.2f}s {dest.stat().st_size:>8} B  "
+              f"\"{word_narration(word)}\"")
+
+    # --- all 26 letter clips, so stepping works without an SD card ---
+    # Prefer the ones gen_assets already produced; synthesise if absent.
+    print()
+    for L in LETTERS:
+        dest = EMBED / "letters" / f"ltr_{L.lower()}.wav"
+        src = ASSETS / "letters" / f"{L.lower()}.wav"
+        if src.exists():
+            shutil.copy(src, dest)
+        else:
+            n.synth(letter_narration(L), dest)
+        total += dest.stat().st_size
+    print(f"  26 letter clips -> {EMBED / 'letters'}")
+    print(f"\n  embedded total: {total / 1024 / 1024:.2f} MB")
     return 0
 
 

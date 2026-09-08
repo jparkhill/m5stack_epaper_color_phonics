@@ -15,7 +15,16 @@ cp assets/phonics/cards/a/apple.{png,wav} main/embedded/
 cp assets/phonics/cards/c/cat.{png,wav}   main/embedded/
 ```
 
-Cost is ~267 KB of the 15 MB app partition. The PNGs are already dithered to
+Also here: **all 26 shared letter clips** (`letters/ltr_*.wav`), so the top
+button can step the taught letter through a word with no card inserted.
+
+They were originally left out to save flash, with built-in cards carrying a
+single combined clip instead. That made the top button look broken -- stepping
+moved the on-screen highlight but kept narrating the card's *original* letter.
+26 clips cost ~4 MB of a 15 MB partition, which is a far better trade than a
+button that silently does the wrong thing.
+
+Total cost is ~4.3 MB of the 15 MB app partition. The PNGs are already dithered to
 the panel's six inks and the WAVs are 22.05 kHz 16-bit mono, exactly as the
 SD-card assets are — no special-casing in the firmware beyond reading from
 flash instead of a file.

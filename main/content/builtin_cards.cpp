@@ -24,6 +24,62 @@ extern const unsigned char cat_png_end[]     asm("_binary_cat_png_end");
 extern const unsigned char cat_wav_start[]   asm("_binary_cat_wav_start");
 extern const unsigned char cat_wav_end[]     asm("_binary_cat_wav_end");
 
+// All 26 shared letter clips, so the taught letter can be stepped through a
+// word with no microSD card present. ~4MB of a 15MB partition; see
+// main/embedded/README.md for why that trade is worth it.
+extern const unsigned char ltr_a_wav_start[] asm("_binary_ltr_a_wav_start");
+extern const unsigned char ltr_a_wav_end[]   asm("_binary_ltr_a_wav_end");
+extern const unsigned char ltr_b_wav_start[] asm("_binary_ltr_b_wav_start");
+extern const unsigned char ltr_b_wav_end[]   asm("_binary_ltr_b_wav_end");
+extern const unsigned char ltr_c_wav_start[] asm("_binary_ltr_c_wav_start");
+extern const unsigned char ltr_c_wav_end[]   asm("_binary_ltr_c_wav_end");
+extern const unsigned char ltr_d_wav_start[] asm("_binary_ltr_d_wav_start");
+extern const unsigned char ltr_d_wav_end[]   asm("_binary_ltr_d_wav_end");
+extern const unsigned char ltr_e_wav_start[] asm("_binary_ltr_e_wav_start");
+extern const unsigned char ltr_e_wav_end[]   asm("_binary_ltr_e_wav_end");
+extern const unsigned char ltr_f_wav_start[] asm("_binary_ltr_f_wav_start");
+extern const unsigned char ltr_f_wav_end[]   asm("_binary_ltr_f_wav_end");
+extern const unsigned char ltr_g_wav_start[] asm("_binary_ltr_g_wav_start");
+extern const unsigned char ltr_g_wav_end[]   asm("_binary_ltr_g_wav_end");
+extern const unsigned char ltr_h_wav_start[] asm("_binary_ltr_h_wav_start");
+extern const unsigned char ltr_h_wav_end[]   asm("_binary_ltr_h_wav_end");
+extern const unsigned char ltr_i_wav_start[] asm("_binary_ltr_i_wav_start");
+extern const unsigned char ltr_i_wav_end[]   asm("_binary_ltr_i_wav_end");
+extern const unsigned char ltr_j_wav_start[] asm("_binary_ltr_j_wav_start");
+extern const unsigned char ltr_j_wav_end[]   asm("_binary_ltr_j_wav_end");
+extern const unsigned char ltr_k_wav_start[] asm("_binary_ltr_k_wav_start");
+extern const unsigned char ltr_k_wav_end[]   asm("_binary_ltr_k_wav_end");
+extern const unsigned char ltr_l_wav_start[] asm("_binary_ltr_l_wav_start");
+extern const unsigned char ltr_l_wav_end[]   asm("_binary_ltr_l_wav_end");
+extern const unsigned char ltr_m_wav_start[] asm("_binary_ltr_m_wav_start");
+extern const unsigned char ltr_m_wav_end[]   asm("_binary_ltr_m_wav_end");
+extern const unsigned char ltr_n_wav_start[] asm("_binary_ltr_n_wav_start");
+extern const unsigned char ltr_n_wav_end[]   asm("_binary_ltr_n_wav_end");
+extern const unsigned char ltr_o_wav_start[] asm("_binary_ltr_o_wav_start");
+extern const unsigned char ltr_o_wav_end[]   asm("_binary_ltr_o_wav_end");
+extern const unsigned char ltr_p_wav_start[] asm("_binary_ltr_p_wav_start");
+extern const unsigned char ltr_p_wav_end[]   asm("_binary_ltr_p_wav_end");
+extern const unsigned char ltr_q_wav_start[] asm("_binary_ltr_q_wav_start");
+extern const unsigned char ltr_q_wav_end[]   asm("_binary_ltr_q_wav_end");
+extern const unsigned char ltr_r_wav_start[] asm("_binary_ltr_r_wav_start");
+extern const unsigned char ltr_r_wav_end[]   asm("_binary_ltr_r_wav_end");
+extern const unsigned char ltr_s_wav_start[] asm("_binary_ltr_s_wav_start");
+extern const unsigned char ltr_s_wav_end[]   asm("_binary_ltr_s_wav_end");
+extern const unsigned char ltr_t_wav_start[] asm("_binary_ltr_t_wav_start");
+extern const unsigned char ltr_t_wav_end[]   asm("_binary_ltr_t_wav_end");
+extern const unsigned char ltr_u_wav_start[] asm("_binary_ltr_u_wav_start");
+extern const unsigned char ltr_u_wav_end[]   asm("_binary_ltr_u_wav_end");
+extern const unsigned char ltr_v_wav_start[] asm("_binary_ltr_v_wav_start");
+extern const unsigned char ltr_v_wav_end[]   asm("_binary_ltr_v_wav_end");
+extern const unsigned char ltr_w_wav_start[] asm("_binary_ltr_w_wav_start");
+extern const unsigned char ltr_w_wav_end[]   asm("_binary_ltr_w_wav_end");
+extern const unsigned char ltr_x_wav_start[] asm("_binary_ltr_x_wav_start");
+extern const unsigned char ltr_x_wav_end[]   asm("_binary_ltr_x_wav_end");
+extern const unsigned char ltr_y_wav_start[] asm("_binary_ltr_y_wav_start");
+extern const unsigned char ltr_y_wav_end[]   asm("_binary_ltr_y_wav_end");
+extern const unsigned char ltr_z_wav_start[] asm("_binary_ltr_z_wav_start");
+extern const unsigned char ltr_z_wav_end[]   asm("_binary_ltr_z_wav_end");
+
 namespace content {
 
 namespace {
@@ -51,6 +107,57 @@ const BuiltinSpec kBuiltins[] = {
 };
 
 }  // namespace
+
+namespace {
+
+struct LetterClip {
+    const unsigned char* start;
+    const unsigned char* end;
+};
+
+const LetterClip kLetterClips[26] = {
+    {ltr_a_wav_start, ltr_a_wav_end},
+    {ltr_b_wav_start, ltr_b_wav_end},
+    {ltr_c_wav_start, ltr_c_wav_end},
+    {ltr_d_wav_start, ltr_d_wav_end},
+    {ltr_e_wav_start, ltr_e_wav_end},
+    {ltr_f_wav_start, ltr_f_wav_end},
+    {ltr_g_wav_start, ltr_g_wav_end},
+    {ltr_h_wav_start, ltr_h_wav_end},
+    {ltr_i_wav_start, ltr_i_wav_end},
+    {ltr_j_wav_start, ltr_j_wav_end},
+    {ltr_k_wav_start, ltr_k_wav_end},
+    {ltr_l_wav_start, ltr_l_wav_end},
+    {ltr_m_wav_start, ltr_m_wav_end},
+    {ltr_n_wav_start, ltr_n_wav_end},
+    {ltr_o_wav_start, ltr_o_wav_end},
+    {ltr_p_wav_start, ltr_p_wav_end},
+    {ltr_q_wav_start, ltr_q_wav_end},
+    {ltr_r_wav_start, ltr_r_wav_end},
+    {ltr_s_wav_start, ltr_s_wav_end},
+    {ltr_t_wav_start, ltr_t_wav_end},
+    {ltr_u_wav_start, ltr_u_wav_end},
+    {ltr_v_wav_start, ltr_v_wav_end},
+    {ltr_w_wav_start, ltr_w_wav_end},
+    {ltr_x_wav_start, ltr_x_wav_end},
+    {ltr_y_wav_start, ltr_y_wav_end},
+    {ltr_z_wav_start, ltr_z_wav_end},
+};
+
+}  // namespace
+
+bool embeddedLetterClip(char letter, const unsigned char** data,
+                        unsigned int* len) {
+    if (data == nullptr || len == nullptr) return false;
+    int idx = -1;
+    if (letter >= 'A' && letter <= 'Z') idx = letter - 'A';
+    else if (letter >= 'a' && letter <= 'z') idx = letter - 'a';
+    if (idx < 0) return false;
+    const LetterClip& c = kLetterClips[idx];
+    *data = c.start;
+    *len = static_cast<unsigned int>(c.end - c.start);
+    return *len > 44;
+}
 
 size_t builtinCardCount() { return sizeof(kBuiltins) / sizeof(kBuiltins[0]); }
 
