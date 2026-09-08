@@ -115,6 +115,36 @@ Register map (all bitmasks over `[4:0]`):
 | `0x16` | function select GPIO0–3, 2 bits each, `00` = plain GPIO |
 | `0x17` | function select GPIO4, `00` = plain GPIO |
 
+## Reading voltages (and a warning about trusting comments)
+
+VBAT, VIN, 5VINOUT and VREF are plain **16-bit little-endian millivolts using
+the FULL high byte**, despite the M5PM1 header describing VBAT/VIN as "high 4
+bits":
+
+| Registers | Raw | Value |
+|---|---|---|
+| `0x20/21` VREF | `ED 0C` | 3309 mV |
+| `0x22/23` VBAT | `3E 10` | 4158 mV |
+| `0x24/25` VIN | `A0 13` | 5024 mV |
+| `0x26/27` 5VINOUT | `AC 13` | 5036 mV |
+
+Masking the high byte with `0x0F` (per the comment) turns a healthy 4158 mV
+cell into **118 mV / 0%** — and that bogus reading is very persuasive, because
+"battery flat" neatly explains a device that will not wake. It cost real
+debugging time chasing a battery that was in fact full.
+
+**Cross-check any decode against a value you already know.** VIN on USB must
+be ~5000 mV; when it read 866 mV the decode was obviously wrong, and that is
+what exposed it. `batt` keeps that check in the output permanently.
+
+`PWR_SRC` (`0x04`) also does not match its documented `0/1/2` enum on this
+part — it reads `0x05`. External power is inferred from the VIN rail instead.
+
+`BATT_LVP` (`0x08`) is a real low-voltage cutoff (`mV = 2000 + n × 7.81`,
+reading 0x40 = 2500 mV here) and below it the PMIC will not start the rails
+from the cell. It is a genuine mechanism — it just was **not** the cause of
+the wake failures on this unit, whose cell was at 4.2 V.
+
 ## Powering off
 
 Write `0xA1` to PMIC register `0x0C` — `[7:4]` is a key that must be `0xA`,

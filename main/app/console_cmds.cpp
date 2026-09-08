@@ -224,6 +224,13 @@ int cmdSleep(int, char**) {
     return 0;
 }
 
+int cmdPmic(int argc, char** argv) {
+    const uint8_t first = (argc >= 2) ? static_cast<uint8_t>(std::strtol(argv[1], nullptr, 16)) : 0x00;
+    const uint8_t last  = (argc >= 3) ? static_cast<uint8_t>(std::strtol(argv[2], nullptr, 16)) : 0x2F;
+    hal::power::dumpRegisters(first, last);
+    return 0;
+}
+
 int cmdBatt(int, char**) {
     hal::power::dumpPowerState();
     return 0;
@@ -299,6 +306,8 @@ esp_err_t start() {
         cmdAutoSleep);
     reg("batt", "Battery voltage, power source, LVP threshold, PMIC sleep cfg",
         cmdBatt);
+    reg("pmic", "pmic [first_hex] [last_hex] -- hex-dump PMIC registers",
+        cmdPmic);
     reg("verify", "Stat every card asset and report what is missing (slow)",
         cmdVerify);
     reg("reboot", "Restart the device", cmdReboot);

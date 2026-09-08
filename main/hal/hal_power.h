@@ -44,6 +44,10 @@ Battery readBattery();
 /// 5V input satisfies it -- which produces exactly that behaviour.
 void dumpPowerState();
 
+/// Hex-dump PMIC registers [first, last]. For working out an encoding from
+/// real values instead of guessing at a datasheet comment.
+void dumpRegisters(uint8_t first, uint8_t last);
+
 /// Cut every rail via the PMIC. Does not return on success -- the board is
 /// off and only the hardware power button brings it back.
 ///

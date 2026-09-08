@@ -372,7 +372,8 @@ void run() {
         s_screen.present(hal::display::RefreshMode::kTextOnly);
     }
 
-    // Attention-holder: keeps moving through the blocking panel refresh.
+    // Already started during the pmic boot stage so that a waking device
+    // shows life immediately; this is a no-op if it is running.
     hal::power::ledRainbowStart();
 
     noteActivity();

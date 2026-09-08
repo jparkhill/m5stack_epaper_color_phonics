@@ -75,6 +75,16 @@ extern "C" void app_main(void) {
     boot::stage("pmic");
     err = hal::power::init();
     if (err == ESP_OK) {
+        // Start the LED animation NOW, not after the first card.
+        //
+        // Boot with a full SD deck takes ~25s (deck load plus a ~16s panel
+        // refresh) and the e-paper keeps showing the PREVIOUS card the whole
+        // time, because it is bistable. So a freshly woken device looks
+        // completely dead, which is very easy to read as "it did not turn
+        // on" -- and did get read that way. The LEDs are the only instant
+        // feedback this hardware has, so they come up as soon as the PMIC
+        // does.
+        hal::power::ledRainbowStart();
         boot::ok("card detect %s",
                  hal::power::sdCardInserted() ? "present" : "absent");
     } else {

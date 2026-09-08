@@ -2,6 +2,7 @@
 #include "hal/hal_pins.h"
 
 #include <cmath>
+#include <cstdio>
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -39,8 +40,25 @@ constexpr uint8_t kRegSysCmd = 0x0C;
 
 // Battery voltage in mV, split across two registers: low byte then the high
 // 4 bits. And the active power source, so we can tell charging from draining.
+// Voltage registers are plain 16-bit LITTLE-ENDIAN millivolts, using the
+// FULL high byte.
+//
+// The M5PM1 header comments claim "high 4 bits" for VBAT/VIN, and believing
+// that produced nonsense: masking the high byte with 0x0F turned a healthy
+// 4158 mV cell into "118 mV (~0%)" and had me confidently blaming a flat
+// battery for a wake failure. A raw register dump settled it:
+//     VBAT 3E 10 -> 0x103E = 4158 mV      (plausible Li-ion)
+//     VIN  A0 13 -> 0x13A0 = 5024 mV      (USB 5V, exactly right)
+//     VREF ED 0C -> 0x0CED = 3309 mV      (3.3V reference)
+// Cross-checking against a value you already know (VIN on USB) is what
+// exposed it; never trust a single unverified decode.
+constexpr uint8_t kRegVrefL = 0x20;
+constexpr uint8_t kRegVrefH = 0x21;
 constexpr uint8_t kRegVbatL = 0x22;
 constexpr uint8_t kRegVbatH = 0x23;
+constexpr uint8_t kRegVinL  = 0x24;
+constexpr uint8_t kRegVinH  = 0x25;
+
 constexpr uint8_t kRegPwrSrc = 0x04;   // [2:0] 0=5VIN, 1=5VINOUT, 2=battery
 constexpr uint8_t kRegWakeSrc = 0x05;  // [6:0] wake-source flags
 constexpr uint8_t kRegPwrCfg  = 0x06;  // rail enables
@@ -100,6 +118,14 @@ bool rd(uint8_t reg, uint8_t* v) {
 
 bool wr(uint8_t reg, uint8_t v) {
     return M5.In_I2C.writeRegister(pins::kAddrPm1, reg, &v, 1, kFreq);
+}
+
+/// Read a 16-bit little-endian millivolt pair.
+bool readMillivolts(uint8_t reg_l, uint8_t reg_h, uint16_t* out) {
+    uint8_t lo = 0, hi = 0;
+    if (!rd(reg_l, &lo) || !rd(reg_h, &hi)) return false;
+    *out = static_cast<uint16_t>(lo | (hi << 8));
+    return true;
 }
 
 /// Read-modify-write: clear `clear_mask`, then set `set_mask`.
@@ -195,13 +221,14 @@ Battery readBattery() {
     Battery b{};
     if (!s_available) return b;
 
-    uint8_t lo = 0, hi = 0, src = 0;
-    if (!rd(kRegVbatL, &lo) || !rd(kRegVbatH, &hi)) return b;
-    b.millivolts = static_cast<uint16_t>(lo | ((hi & 0x0F) << 8));
+    if (!readMillivolts(kRegVbatL, kRegVbatH, &b.millivolts)) return b;
 
-    if (rd(kRegPwrSrc, &src)) {
-        // Source 2 is the battery; anything else means external 5V is in.
-        b.charging = (src & 0x07) != 2;
+    // PWR_SRC (0x04) does not match its documented 0/1/2 enum on this part --
+    // it read 0x05, which is out of range. So infer external power from the
+    // VIN rail instead, which decodes correctly and is unambiguous.
+    uint16_t vin = 0;
+    if (readMillivolts(kRegVinL, kRegVinH, &vin)) {
+        b.charging = vin > 4300;
     }
 
     // A single-cell Li-ion is flat around 3.3V and full around 4.2V, and the
@@ -234,6 +261,31 @@ Battery readBattery() {
     return b;
 }
 
+void dumpRegisters(uint8_t first, uint8_t last) {
+    if (!s_available) {
+        ESP_LOGE(kTag, "PMIC unavailable");
+        return;
+    }
+    ESP_LOGW(kTag, "PMIC 0x%02X register dump 0x%02X..0x%02X", pins::kAddrPm1,
+             first, last);
+    char line[80];
+    for (uint8_t base = first & 0xF0u; base <= (last | 0x0Fu); base += 16) {
+        int n = std::snprintf(line, sizeof(line), "  %02X:", base);
+        for (uint8_t i = 0; i < 16; ++i) {
+            const uint8_t reg = static_cast<uint8_t>(base + i);
+            if (reg < first || reg > last) {
+                n += std::snprintf(line + n, sizeof(line) - n, " --");
+                continue;
+            }
+            uint8_t v = 0;
+            n += std::snprintf(line + n, sizeof(line) - n,
+                               rd(reg, &v) ? " %02X" : " ??", v);
+        }
+        ESP_LOGW(kTag, "%s", line);
+        if (base > 0xF0u - 16u) break;
+    }
+}
+
 void dumpPowerState() {
     if (!s_available) {
         ESP_LOGE(kTag, "PMIC unavailable");
@@ -255,23 +307,36 @@ void dumpPowerState() {
         const uint8_t i = src & 0x07;
         ESP_LOGW(kTag, "power source : %s (0x%02X)", i < 3 ? names[i] : "?", src);
     }
+    // Keep the cross-check: VIN must read ~5000 mV on USB. If it does not,
+    // the decode is wrong again and nothing below should be believed.
+    uint16_t vin = 0, vref = 0;
+    if (readMillivolts(kRegVinL, kRegVinH, &vin)) {
+        ESP_LOGW(kTag, "VIN          : %u mV  %s", vin,
+                 (vin > 4300) ? "(external 5V present)"
+                              : (vin < 500 ? "(no external supply)"
+                                           : "(?? decode suspect)"));
+    }
+    if (readMillivolts(kRegVrefL, kRegVrefH, &vref)) {
+        ESP_LOGW(kTag, "VREF         : %u mV  (expect ~3300)", vref);
+    }
     if (rd(kRegBattLvp, &lvp)) {
         // mV = 2000 + n * 7.81
         const uint32_t thresh = 2000u + (lvp * 781u) / 100u;
-        ESP_LOGW(kTag, "batt LVP     : %lu mV (reg 0x%02X)",
+        ESP_LOGW(kTag, "batt LVP     : %lu mV (raw 0x%02X)",
                  (unsigned long)thresh, lvp);
         if (b.valid && b.millivolts > 0 && b.millivolts < thresh) {
-            ESP_LOGE(kTag, "  ** cell is BELOW the protection threshold. The "
-                           "PMIC will not start");
-            ESP_LOGE(kTag, "  ** the rails from battery alone -- this is why a "
-                           "PWR_KEY press does");
-            ESP_LOGE(kTag, "  ** nothing while plugging in USB wakes it. Charge "
-                           "it.");
+            ESP_LOGE(kTag, "  ** cell is BELOW the protection threshold: the "
+                           "PMIC will not start the");
+            ESP_LOGE(kTag, "  ** rails from battery alone. Charge it.");
+        } else if (b.valid) {
+            ESP_LOGW(kTag, "  (cell is %d mV above the threshold -- LVP is NOT "
+                           "limiting wake)",
+                     static_cast<int>(b.millivolts) - static_cast<int>(thresh));
         }
     }
     if (rd(kRegI2cCfg, &i2ccfg)) {
         const uint8_t slp = i2ccfg & 0x0F;
-        ESP_LOGW(kTag, "I2C sleep    : %s (reg 0x%02X)",
+        ESP_LOGW(kTag, "I2C sleep    : %s (raw 0x%02X)",
                  slp == 0 ? "disabled (correct)" : "ENABLED -- PMIC may nap",
                  i2ccfg);
     }
@@ -284,7 +349,7 @@ void dumpPowerState() {
     }
     if (rd(kRegPwrCfg, &cfg)) {
         ESP_LOGW(kTag, "rails        : LDO3V3=%d DCDC5V=%d BOOST=%d CHG=%d "
-                       "(reg 0x%02X)",
+                       "(raw 0x%02X)",
                  (cfg >> 2) & 1, (cfg >> 1) & 1, (cfg >> 3) & 1, cfg & 1, cfg);
     }
     ESP_LOGW(kTag, "--- end ---");
