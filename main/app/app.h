@@ -76,10 +76,12 @@ void requestSleep();
 
 /// Enable/disable the idle auto power-off at runtime, persisted in NVS.
 ///
-/// Exists because waking the board is a LONG press of PWR_KEY (the PMIC
-/// treats a short click as a reset), which is easy to get wrong -- a device
-/// that has powered itself off can look bricked. Being able to turn the
-/// timeout off from the console beats reflashing to find out.
+/// Exists because a powered-off board is easy to mistake for a broken one.
+/// PWR_KEY is: quick press = on, double press = off, HOLD = download mode --
+/// and holding it (the intuitive "power on" gesture) parks the chip in
+/// download mode, where USB enumerates and esptool works but the app never
+/// runs and nothing is printed at all. Being able to switch the timeout off
+/// from the console beats reflashing to find out.
 void setIdleSleepEnabled(bool enabled);
 bool idleSleepEnabled();
 

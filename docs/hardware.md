@@ -121,19 +121,31 @@ Write `0xA1` to PMIC register `0x0C` — `[7:4]` is a key that must be `0xA`,
 `[1:0]` is the command (`01` = shutdown, `10` = reboot, `11` = download mode).
 The PMIC wants a settle window of ~120 ms before it will accept the write.
 
-**Waking needs a LONG press.** Button config register `0x49` has
-`SINGLE_RST_DIS` (bit 0, single-click = *reset*, enabled by default) and
-`LONG_DLY` (bits [4:3], long-press delay 1/2/3/4 s). So a short click resets
-rather than powers on; the power-on/off event is the long press. Hold for
-~2–4 s.
+**`PWR_KEY` gestures: quick press = on, double press = off, HOLD = download
+mode.** Do not hold it to power on -- that is the download-mode gesture.
 
-A powered-off board is easy to mistake for a dead one, because esptool can
-still reach it: USB-Serial-JTAG enumerates off the cable's own power and
-esptool drives the chip into ROM download mode, so `read_mac` and even a full
-flash succeed while the app never runs and the console is completely silent
-(zero bytes, not even 2nd-stage bootloader output). If you see that
-combination -- esptool works, console dead -- the PMIC is holding the board
-off. Hold PWR_KEY.
+The failure this produces is genuinely misleading. In download mode the board
+enumerates on USB, esptool reads the MAC, `read_flash` works and a full
+`idf.py flash` verifies every image -- while the application never runs and
+the console emits **zero bytes**, not even the 2nd-stage bootloader line. So
+"esptool works but the console is silent" does NOT mean the firmware is
+broken; check the boot mode first:
+
+```
+$ idf.py monitor
+rst:0x15 (USB_UART_CHIP_RESET),boot:0x23 (DOWNLOAD(USB/UART0))
+waiting for download
+```
+
+`boot:0x23` is download mode. Worse, you cannot reset your way out of it from
+the host: esptool's and idf_monitor's own reset sequences *request* download
+mode on this chip, so every attempt to look re-parks it there. A quick press
+of PWR_KEY is the way out.
+
+The PMIC's button register `0x49` does expose `LONG_DLY` (1/2/3/4 s) and
+`SINGLE_RST_DIS`, which makes it tempting to conclude that the long press is
+the power-on gesture. It is not -- those fields configure the timings, not the
+mapping.
 
 This cuts every rail; the hardware power button is the only way back. Put the
 panel into its own sleep state (`M5.Display.sleep()`) first rather than

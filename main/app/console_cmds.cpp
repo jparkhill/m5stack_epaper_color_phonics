@@ -211,14 +211,23 @@ int cmdAutoSleep(int, char**) {
     setIdleSleepEnabled(true);
     std::printf("auto power-off ENABLED (%lu min idle).\n",
                 (unsigned long)(kIdleSleepSec / 60));
-    std::printf("Remember: waking needs a LONG press of PWR_KEY (~2-4s).\n");
+    std::printf("Wake with a QUICK press of PWR_KEY. Do NOT hold it -- "
+                "holding enters download mode.\n");
     return 0;
 }
 
 int cmdSleep(int, char**) {
-    std::printf("powering off. Press the power button to wake.\n");
+    std::printf("powering off. QUICK-press PWR_KEY to wake (holding it "
+                "enters download mode).\n");
     std::printf("(the current card stays on screen -- e-paper is bistable)\n");
     requestSleep();
+    return 0;
+}
+
+int cmdVerify(int, char**) {
+    std::printf("stat-ing every referenced file; this takes a while over "
+                "SPI-mode SD...\n");
+    content::verifyAllAssets();
     return 0;
 }
 
@@ -283,6 +292,8 @@ esp_err_t start() {
         cmdNoSleep);
     reg("autosleep", "Re-enable the idle auto power-off (persisted)",
         cmdAutoSleep);
+    reg("verify", "Stat every card asset and report what is missing (slow)",
+        cmdVerify);
     reg("reboot", "Restart the device", cmdReboot);
 
     err = esp_console_start_repl(repl);

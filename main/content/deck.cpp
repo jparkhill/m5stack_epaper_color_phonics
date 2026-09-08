@@ -6,6 +6,9 @@
 #include <sys/stat.h>
 
 #include <cJSON.h>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_random.h>
@@ -147,6 +150,11 @@ esp_err_t begin() {
         if (!fillBuiltinCard(i, &c)) continue;
         s_cards[s_count++] = c;
         countCard(c);
+
+        // Let the scheduler breathe. Without this the parse loop plus any
+        // sampled stat() calls can hold CPU0 long enough to trip the task
+        // watchdog.
+        if ((s_count & 0x0F) == 0) vTaskDelay(1);
         ESP_LOGI(kTag, "built-in card %s (%s): %u B image, %u B audio",
                  c.id, c.display, c.image_len, c.audio_len);
     }
@@ -160,6 +168,7 @@ esp_err_t begin() {
 esp_err_t load(const char* manifest_path, bool verify_assets) {
     if (manifest_path == nullptr) return ESP_ERR_INVALID_ARG;
     if (!allocTable()) return ESP_ERR_NO_MEM;
+    const int64_t t_start = esp_timer_get_time();
     // NOTE: does not reset the table -- built-ins registered by begin() stay
     // in the rotation and the SD deck is appended to them.
     const size_t before = s_count;
@@ -257,7 +266,23 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
         joinPath(c.image, sizeof(c.image), j_image->valuestring);
         joinPath(c.audio, sizeof(c.audio), j_audio->valuestring);
 
-        if (verify_assets) {
+        // Verification is SAMPLED, not exhaustive.
+        //
+        // Checking every card cost 2 stat() calls x 260 cards = 520 stats on
+        // a 20MHz SPI-mode SD card. That took tens of seconds AND ran in a
+        // tight loop with no yielding, which starved the idle task and
+        // tripped the 30s task watchdog -- the board died ~29s into boot.
+        //
+        // One card per letter is enough to catch the cases that actually
+        // happen: a card that was never written, a half-copied directory, a
+        // manifest from a different generation. An individually missing file
+        // is handled gracefully at use time anyway (the image falls back to a
+        // big letter, the audio logs and is skipped), so it does not justify
+        // a slow boot.
+        const int li_probe = letterIndex(c.letter);
+        const bool sample = verify_assets && li_probe >= 0 &&
+                            s_per_letter[li_probe] == 0;
+        if (sample) {
             if (!fileExists(c.image)) {
                 ESP_LOGW(kTag, "dropping %s: image missing (%s)", c.id, c.image);
                 ++s_dropped;
@@ -272,6 +297,11 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
 
         s_cards[s_count++] = c;
         countCard(c);
+
+        // Let the scheduler breathe. Without this the parse loop plus any
+        // sampled stat() calls can hold CPU0 long enough to trip the task
+        // watchdog.
+        if ((s_count & 0x0F) == 0) vTaskDelay(1);
     }
 
     cJSON_Delete(root);
@@ -295,6 +325,9 @@ esp_err_t load(const char* manifest_path, bool verify_assets) {
 
     reshuffle();
     s_loaded = true;
+    ESP_LOGI(kTag, "deck load took %.2f s (%s verification)",
+             (esp_timer_get_time() - t_start) / 1e6,
+             verify_assets ? "sampled" : "no");
 
     ESP_LOGI(kTag, "loaded %u cards across %u letters (%u dropped)",
              (unsigned)s_count, (unsigned)letters_with_cards,
@@ -465,6 +498,40 @@ const char* letterAudioPath(char letter) {
     const int idx = letterIndex(letter);
     if (idx < 0 || s_letter_audio[idx][0] == '\0') return nullptr;
     return s_letter_audio[idx];
+}
+
+void verifyAllAssets() {
+    if (!s_loaded) {
+        ESP_LOGW(kTag, "deck not loaded");
+        return;
+    }
+    const int64_t t0 = esp_timer_get_time();
+    int missing_img = 0, missing_aud = 0, missing_letters = 0;
+
+    for (int i = 0; i < 26; ++i) {
+        if (s_letter_audio[i][0] == '\0') continue;
+        if (!fileExists(s_letter_audio[i])) {
+            ESP_LOGW(kTag, "letter clip missing: %s", s_letter_audio[i]);
+            ++missing_letters;
+        }
+    }
+    for (size_t i = 0; i < s_count; ++i) {
+        const Card& c = s_cards[i];
+        if (c.isBuiltin()) continue;
+        if (!fileExists(c.image)) {
+            ESP_LOGW(kTag, "missing image: %s", c.image);
+            ++missing_img;
+        }
+        if (!fileExists(c.audio)) {
+            ESP_LOGW(kTag, "missing audio: %s", c.audio);
+            ++missing_aud;
+        }
+        if ((i & 0x0F) == 0) vTaskDelay(1);
+    }
+    ESP_LOGI(kTag, "full verify: %u cards in %.2f s -- %d images, %d audio, "
+                   "%d letter clips missing",
+             (unsigned)s_count, (esp_timer_get_time() - t0) / 1e6, missing_img,
+             missing_aud, missing_letters);
 }
 
 int cardsForLetter(char letter) {

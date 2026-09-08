@@ -124,6 +124,11 @@ const Card* selectLetter(char letter, int nth);
 int cardsForLetter(char letter);
 
 // --- Built-in (in-flash) cards, defined in builtin_cards.cpp --------------
+/// Stat every referenced file and report what is missing. Slow (two stats
+/// per card over SPI-mode SD) -- exposed as the `verify` console command
+/// rather than run at boot.
+void verifyAllAssets();
+
 size_t builtinCardCount();
 bool fillBuiltinCard(size_t index, Card* out);
 

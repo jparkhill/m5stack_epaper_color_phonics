@@ -375,8 +375,8 @@ void run() {
         ESP_LOGI(kTag, "auto power-off after %lu min of no activity%s",
                  (unsigned long)(kIdleSleepSec / 60),
                  kSleepWhileUsbConnected ? "" : " (deferred while USB attached)");
-        ESP_LOGI(kTag, "waking needs a LONG press of PWR_KEY (~2-4s); a short "
-                       "click is a reset. `nosleep` disables the timeout.");
+        ESP_LOGI(kTag, "PWR_KEY: quick press = on, double = off, HOLD = "
+                       "download mode. `nosleep` disables the timeout.");
     } else {
         ESP_LOGW(kTag, "auto power-off is DISABLED (persisted); `autosleep` "
                        "re-enables it");

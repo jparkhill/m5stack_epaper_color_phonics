@@ -186,7 +186,8 @@ void powerOff() {
         ESP_LOGE(kTag, "PMIC unavailable; cannot power off");
         return;
     }
-    ESP_LOGW(kTag, "cutting power via PMIC (press the power button to wake)");
+    ESP_LOGW(kTag, "cutting power via PMIC; quick-press PWR_KEY to wake "
+                   "(do NOT hold -- holding enters download mode)");
     // The PMIC wants a settle window before it will accept the command.
     vTaskDelay(pdMS_TO_TICKS(120));
     if (!wr(kRegSysCmd, static_cast<uint8_t>(kSysCmdKey | kSysCmdShutdown))) {

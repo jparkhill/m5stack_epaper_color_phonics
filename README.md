@@ -92,13 +92,22 @@ still appear. The same card never comes up twice in a row.
 
 ## Power
 
-> **Waking is a LONG press.** The PMIC treats a *short* click of `PWR_KEY` as
-> a **reset**, not a power-on (`SINGLE_RST_DIS` / `LONG_DLY` in its button
-> register `0x49`). Hold `PWR_KEY` for **~2–4 seconds** to turn the board on.
-> Tapping it does nothing, which makes a powered-off device look bricked.
+> **`PWR_KEY` gestures (from the M5PM1 spec):**
 >
-> If that is more trouble than it is worth, `nosleep` on the console disables
-> the idle timeout permanently (saved to NVS); `autosleep` restores it.
+> | Gesture | Effect |
+> |---|---|
+> | **Quick press** | Power **on** |
+> | **Double press** | Power **off** |
+> | **Hold** | Enter ROM **download mode** |
+>
+> Do *not* hold the button to switch the device on. Holding it drops the chip
+> into download mode: it enumerates on USB and esptool talks to it happily,
+> but the application never runs, nothing is printed — not even ESP-IDF's own
+> bootloader banner — and the screen never updates. It looks like a dead
+> board. A quick press recovers it.
+>
+> If the idle power-off is more trouble than it is worth, `nosleep` on the
+> console disables it permanently (saved to NVS); `autosleep` restores it.
 
 The device powers itself **off** after **15 minutes** with no user activity
 (`kIdleSleepSec` in [`main/app/app.h`](main/app/app.h)). This is a real rail
