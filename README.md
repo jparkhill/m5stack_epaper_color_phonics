@@ -92,6 +92,14 @@ still appear. The same card never comes up twice in a row.
 
 ## Power
 
+> **Waking is a LONG press.** The PMIC treats a *short* click of `PWR_KEY` as
+> a **reset**, not a power-on (`SINGLE_RST_DIS` / `LONG_DLY` in its button
+> register `0x49`). Hold `PWR_KEY` for **~2–4 seconds** to turn the board on.
+> Tapping it does nothing, which makes a powered-off device look bricked.
+>
+> If that is more trouble than it is worth, `nosleep` on the console disables
+> the idle timeout permanently (saved to NVS); `autosleep` restores it.
+
 The device powers itself **off** after **15 minutes** with no user activity
 (`kIdleSleepSec` in [`main/app/app.h`](main/app/app.h)). This is a real rail
 cut through the M5PM1 PMIC, not a CPU sleep state, so **only the hardware
@@ -288,6 +296,7 @@ reflash. Type `help` for the list.
 | `vol 200` / `beep` | Speaker |
 | `audio` | Codec register read-back + a loud 2 s test tone |
 | `repaint` | Force a full repaint |
+| `nosleep` / `autosleep` | Disable / re-enable the idle auto power-off (persisted) |
 | `reboot` | Restart |
 
 Boot is staged and traced, so a cold start is diagnosable from one paste:

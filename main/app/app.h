@@ -74,6 +74,15 @@ void requestStatusDump();
 /// timeout takes, so it is the way to test sleep without waiting 15 minutes.
 void requestSleep();
 
+/// Enable/disable the idle auto power-off at runtime, persisted in NVS.
+///
+/// Exists because waking the board is a LONG press of PWR_KEY (the PMIC
+/// treats a short click as a reset), which is easy to get wrong -- a device
+/// that has powered itself off can look bricked. Being able to turn the
+/// timeout off from the console beats reflashing to find out.
+void setIdleSleepEnabled(bool enabled);
+bool idleSleepEnabled();
+
 /// Seconds remaining before the idle timeout fires.
 uint32_t secondsUntilSleep();
 

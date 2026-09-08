@@ -19,6 +19,8 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <driver/usb_serial_jtag.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 #include <M5Unified.hpp>
 
 namespace app {
@@ -50,6 +52,26 @@ int64_t s_last_clock_refresh_us = 0;
 int64_t s_last_sensor_us = 0;
 int64_t s_last_activity_us = 0;
 uint32_t s_cards_shown = 0;
+bool s_sleep_enabled = true;
+
+constexpr const char* kNvsNamespace = "phonics";
+constexpr const char* kNvsSleepKey = "sleep_en";
+
+void loadSleepSetting() {
+    nvs_handle_t h;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &h) != ESP_OK) return;
+    uint8_t v = 1;
+    if (nvs_get_u8(h, kNvsSleepKey, &v) == ESP_OK) s_sleep_enabled = (v != 0);
+    nvs_close(h);
+}
+
+void saveSleepSetting() {
+    nvs_handle_t h;
+    if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, kNvsSleepKey, s_sleep_enabled ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+}
 
 /// Anything the user did. Resets the idle timeout.
 void noteActivity() { s_last_activity_us = esp_timer_get_time(); }
@@ -256,9 +278,13 @@ void dumpStatus() {
 
     ESP_LOGI(kTag, "volume          : %u/255", hal::audio::volume());
     ESP_LOGI(kTag, "buttons         : %s", hal::input::rawSnapshot());
-    ESP_LOGI(kTag, "sleeps in       : %lu s (idle timeout %lu min)",
-             (unsigned long)secondsUntilSleep(),
-             (unsigned long)(kIdleSleepSec / 60));
+    if (s_sleep_enabled) {
+        ESP_LOGI(kTag, "sleeps in       : %lu s (idle timeout %lu min)",
+                 (unsigned long)secondsUntilSleep(),
+                 (unsigned long)(kIdleSleepSec / 60));
+    } else {
+        ESP_LOGI(kTag, "sleeps in       : never (auto power-off disabled)");
+    }
     boot::heapReport("now");
 }
 
@@ -309,6 +335,7 @@ esp_err_t init() {
     s_queue = xQueueCreate(8, sizeof(Message));
     if (s_queue == nullptr) return ESP_ERR_NO_MEM;
 
+    loadSleepSetting();
     s_screen.init();
     s_screen.describe();
 
@@ -344,9 +371,16 @@ void run() {
     noteActivity();
     ESP_LOGI(kTag, "ready. upper side = next card | lower side = repeat | "
                    "top = next letter in the word");
-    ESP_LOGI(kTag, "auto power-off after %lu min of no activity%s",
-             (unsigned long)(kIdleSleepSec / 60),
-             kSleepWhileUsbConnected ? "" : " (deferred while USB is attached)");
+    if (s_sleep_enabled) {
+        ESP_LOGI(kTag, "auto power-off after %lu min of no activity%s",
+                 (unsigned long)(kIdleSleepSec / 60),
+                 kSleepWhileUsbConnected ? "" : " (deferred while USB attached)");
+        ESP_LOGI(kTag, "waking needs a LONG press of PWR_KEY (~2-4s); a short "
+                       "click is a reset. `nosleep` disables the timeout.");
+    } else {
+        ESP_LOGW(kTag, "auto power-off is DISABLED (persisted); `autosleep` "
+                       "re-enables it");
+    }
 
     for (;;) {
         hal::input::update();
@@ -387,8 +421,9 @@ void run() {
             s_last_sensor_us = now;
         }
 
-        if (now - s_last_activity_us >
-            static_cast<int64_t>(kIdleSleepSec) * 1000000) {
+        if (s_sleep_enabled &&
+            now - s_last_activity_us >
+                static_cast<int64_t>(kIdleSleepSec) * 1000000) {
             if (!kSleepWhileUsbConnected && usb_serial_jtag_is_connected()) {
                 // Do not yank the serial port out from under a developer.
                 ESP_LOGD(kTag, "idle timeout reached but USB is attached; "
@@ -416,6 +451,16 @@ void requestReplay()     { post(Message{Req::kReplay, 0, 0}); }
 void requestRepaint()    { post(Message{Req::kRepaint, 0, 0}); }
 void requestStatusDump() { post(Message{Req::kStatusDump, 0, 0}); }
 void requestSleep()      { post(Message{Req::kSleep, 0, 0}); }
+
+void setIdleSleepEnabled(bool enabled) {
+    s_sleep_enabled = enabled;
+    saveSleepSetting();
+    noteActivity();
+    ESP_LOGW(kTag, "auto power-off %s (saved to NVS)",
+             enabled ? "ENABLED" : "DISABLED");
+}
+
+bool idleSleepEnabled() { return s_sleep_enabled; }
 
 uint32_t secondsUntilSleep() {
     const int64_t elapsed = esp_timer_get_time() - s_last_activity_us;

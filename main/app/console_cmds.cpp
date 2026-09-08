@@ -201,6 +201,20 @@ int cmdDeck(int, char**) {
     return 0;
 }
 
+int cmdNoSleep(int, char**) {
+    setIdleSleepEnabled(false);
+    std::printf("auto power-off DISABLED and saved. The device will stay on.\n");
+    return 0;
+}
+
+int cmdAutoSleep(int, char**) {
+    setIdleSleepEnabled(true);
+    std::printf("auto power-off ENABLED (%lu min idle).\n",
+                (unsigned long)(kIdleSleepSec / 60));
+    std::printf("Remember: waking needs a LONG press of PWR_KEY (~2-4s).\n");
+    return 0;
+}
+
 int cmdSleep(int, char**) {
     std::printf("powering off. Press the power button to wake.\n");
     std::printf("(the current card stays on screen -- e-paper is bistable)\n");
@@ -265,6 +279,10 @@ esp_err_t start() {
     reg("deck", "Per-letter card counts", cmdDeck);
     reg("sleep", "Power off now via the PMIC (tests the idle timeout path)",
         cmdSleep);
+    reg("nosleep", "Disable the idle auto power-off (persisted in NVS)",
+        cmdNoSleep);
+    reg("autosleep", "Re-enable the idle auto power-off (persisted)",
+        cmdAutoSleep);
     reg("reboot", "Restart the device", cmdReboot);
 
     err = esp_console_start_repl(repl);
