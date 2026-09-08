@@ -259,6 +259,18 @@ programmes teach.
 
 Z is `zee` to match the American voice; change that one entry for `zed`.
 
+That markup has one more trap: handed a whole multi-sentence narration
+containing `[[...]]`, piper renders only the first marked sentence and
+**silently drops the rest** — an output *shorter than either half alone* is
+the tell. So `Narrator.synth` splits into sentences and synthesises them
+individually, concatenating the PCM. On one narration that took the result
+from 2.14 s to 8.07 s.
+
+The word clip **spells the word by letter name** rather than sounding out
+syllables: `apple` → *"eigh, pee, pee, ell, ee. apple."* Syllable
+segmentation was tried first and came out garbled — a TTS model is trained on
+running speech, not on deliberately fragmented words.
+
 That voice has 904 speakers, so the speaker id is pinned; `--audition` renders
 one line across several speakers so you can pick by ear:
 
@@ -305,6 +317,8 @@ reflash. Type `help` for the list.
 | `vol 200` / `beep` | Speaker |
 | `audio` | Codec register read-back + a loud 2 s test tone |
 | `repaint` | Force a full repaint |
+| `batt` | Battery voltage, power source, LVP threshold, PMIC sleep config |
+| `verify` | Stat every card asset and report what is missing (slow) |
 | `nosleep` / `autosleep` | Disable / re-enable the idle auto power-off (persisted) |
 | `reboot` | Restart |
 

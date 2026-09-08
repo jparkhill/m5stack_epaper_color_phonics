@@ -37,6 +37,32 @@ char s_letter_audio[26][112] = {};
 
 Focus s_focus{0, 0, 'A'};
 
+// Ring of recently-shown card indices, so advanceRandom() can refuse to
+// repeat any of them. 0xFFFF means "empty slot".
+uint16_t s_recent[kNoRepeatHistory];
+size_t s_recent_pos = 0;
+bool s_recent_init = false;
+
+void recentInit() {
+    for (size_t i = 0; i < kNoRepeatHistory; ++i) s_recent[i] = 0xFFFF;
+    s_recent_pos = 0;
+    s_recent_init = true;
+}
+
+bool recentlyShown(uint16_t idx) {
+    if (!s_recent_init) return false;
+    for (size_t i = 0; i < kNoRepeatHistory; ++i) {
+        if (s_recent[i] == idx) return true;
+    }
+    return false;
+}
+
+void noteShown(uint16_t idx) {
+    if (!s_recent_init) recentInit();
+    s_recent[s_recent_pos] = idx;
+    s_recent_pos = (s_recent_pos + 1) % kNoRepeatHistory;
+}
+
 bool fileExists(const char* path) {
     struct stat st{};
     return stat(path, &st) == 0 && st.st_size > 0;
@@ -368,12 +394,18 @@ const Card* advance() {
     if (!s_loaded || s_count == 0) return nullptr;
     if (s_order_pos >= s_count) reshuffle();
     s_current = s_order[s_order_pos++];
+    noteShown(static_cast<uint16_t>(s_current));
     resetFocus();
     return &s_cards[s_current];
 }
 
 const Card* advanceRandom() {
     if (!s_loaded || s_count == 0) return nullptr;
+    if (!s_recent_init) recentInit();
+
+    // Never let the history cover the whole deck, or every pick is rejected.
+    const size_t history =
+        (s_count > kNoRepeatHistory + 4) ? kNoRepeatHistory : (s_count / 2);
 
     // Letters that actually have cards.
     uint8_t avail[26];
@@ -383,9 +415,9 @@ const Card* advanceRandom() {
     }
     if (n_avail == 0) return nullptr;
 
-    // Two attempts, so a repeat of the current card gets one re-roll rather
-    // than looping forever when the deck is tiny (e.g. built-ins only).
-    for (int attempt = 0; attempt < 2; ++attempt) {
+    // Several attempts: reject anything in the recent history, then fall back
+    // to merely not repeating the current card.
+    for (int attempt = 0; attempt < 24; ++attempt) {
         const int li = avail[esp_random() % static_cast<uint32_t>(n_avail)];
 
         // Split this letter's cards by whether the grapheme is word-initial.
@@ -401,29 +433,31 @@ const Card* advanceRandom() {
         }
         if (n_init == 0 && n_other == 0) continue;
 
-        // Roll for the bias, then fall back if the chosen bucket is empty.
         const bool want_initial =
-            (esp_random() % 1000u) < static_cast<uint32_t>(kInitialGraphemeBias * 1000.0f);
+            (esp_random() % 1000u) <
+            static_cast<uint32_t>(kInitialGraphemeBias * 1000.0f);
         const uint16_t* bucket = nullptr;
         int bucket_n = 0;
-        if (want_initial && n_init > 0) {
-            bucket = initial; bucket_n = n_init;
-        } else if (!want_initial && n_other > 0) {
-            bucket = other; bucket_n = n_other;
-        } else if (n_init > 0) {
-            bucket = initial; bucket_n = n_init;
-        } else {
-            bucket = other; bucket_n = n_other;
-        }
+        if (want_initial && n_init > 0)        { bucket = initial; bucket_n = n_init; }
+        else if (!want_initial && n_other > 0) { bucket = other;   bucket_n = n_other; }
+        else if (n_init > 0)                   { bucket = initial; bucket_n = n_init; }
+        else                                   { bucket = other;   bucket_n = n_other; }
 
-        const int pick = bucket[esp_random() % static_cast<uint32_t>(bucket_n)];
-        if (pick == s_current && s_count > 1) continue;   // re-roll a repeat
-        s_current = pick;
+        const uint16_t pick = bucket[esp_random() % static_cast<uint32_t>(bucket_n)];
+
+        // First 16 attempts insist on a card outside the history; after that
+        // settle for anything that is not the current card.
+        const bool strict = attempt < 16 && history > 0;
+        if (strict && recentlyShown(pick)) continue;
+        if (static_cast<int>(pick) == s_current && s_count > 1) continue;
+
+        s_current = static_cast<int>(pick);
+        noteShown(pick);
         resetFocus();
         return &s_cards[pick];
     }
 
-    // Both attempts landed on the current card; just advance the playlist.
+    // Everything was rejected (tiny deck); just advance the playlist.
     return advance();
 }
 

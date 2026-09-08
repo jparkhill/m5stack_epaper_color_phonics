@@ -36,6 +36,16 @@ constexpr uint8_t kRegFunc1 = 0x17;  // [1:0] GPIO4, 00=plain GPIO
 // System command register. [7:4] must be the key 0xA, [1:0] is the command:
 // 00 no-op, 01 shutdown, 10 reboot, 11 download mode.
 constexpr uint8_t kRegSysCmd = 0x0C;
+
+// Battery voltage in mV, split across two registers: low byte then the high
+// 4 bits. And the active power source, so we can tell charging from draining.
+constexpr uint8_t kRegVbatL = 0x22;
+constexpr uint8_t kRegVbatH = 0x23;
+constexpr uint8_t kRegPwrSrc = 0x04;   // [2:0] 0=5VIN, 1=5VINOUT, 2=battery
+constexpr uint8_t kRegWakeSrc = 0x05;  // [6:0] wake-source flags
+constexpr uint8_t kRegPwrCfg  = 0x06;  // rail enables
+constexpr uint8_t kRegBattLvp = 0x08;  // low-voltage protection threshold
+constexpr uint8_t kRegI2cCfg  = 0x09;  // [3:0] SLP_TO: PMIC sleeps on I2C idle
 constexpr uint8_t kSysCmdKey = 0xA0;
 constexpr uint8_t kSysCmdShutdown = 0x01;
 
@@ -180,6 +190,105 @@ void ledRainbowStop() {
 }
 
 bool ledRainbowRunning() { return s_rainbow_task != nullptr; }
+
+Battery readBattery() {
+    Battery b{};
+    if (!s_available) return b;
+
+    uint8_t lo = 0, hi = 0, src = 0;
+    if (!rd(kRegVbatL, &lo) || !rd(kRegVbatH, &hi)) return b;
+    b.millivolts = static_cast<uint16_t>(lo | ((hi & 0x0F) << 8));
+
+    if (rd(kRegPwrSrc, &src)) {
+        // Source 2 is the battery; anything else means external 5V is in.
+        b.charging = (src & 0x07) != 2;
+    }
+
+    // A single-cell Li-ion is flat around 3.3V and full around 4.2V, and the
+    // curve is far from linear -- a straight 3.3-4.2 map reads ~50% when the
+    // cell is nearly empty. These breakpoints follow the discharge plateau so
+    // the number degrades honestly.
+    struct Point { uint16_t mv; uint8_t pct; };
+    static constexpr Point kCurve[] = {
+        {3300, 0}, {3600, 10}, {3700, 25}, {3800, 50},
+        {3900, 70}, {4000, 85}, {4150, 100},
+    };
+    const uint16_t mv = b.millivolts;
+    if (mv == 0) return b;                 // no sensible reading
+    if (mv <= kCurve[0].mv) {
+        b.percent = 0;
+    } else if (mv >= kCurve[6].mv) {
+        b.percent = 100;
+    } else {
+        for (size_t i = 1; i < sizeof(kCurve) / sizeof(kCurve[0]); ++i) {
+            if (mv <= kCurve[i].mv) {
+                const Point& a = kCurve[i - 1];
+                const Point& c = kCurve[i];
+                b.percent = static_cast<uint8_t>(
+                    a.pct + (mv - a.mv) * (c.pct - a.pct) / (c.mv - a.mv));
+                break;
+            }
+        }
+    }
+    b.valid = true;
+    return b;
+}
+
+void dumpPowerState() {
+    if (!s_available) {
+        ESP_LOGE(kTag, "PMIC unavailable");
+        return;
+    }
+    const Battery b = readBattery();
+    ESP_LOGW(kTag, "--- power state ---");
+    if (b.valid) {
+        ESP_LOGW(kTag, "battery      : %u mV  (~%u%%)  %s", b.millivolts,
+                 b.percent, b.charging ? "on external 5V" : "on battery");
+    } else {
+        ESP_LOGW(kTag, "battery      : no valid reading (%u mV raw)",
+                 b.millivolts);
+    }
+
+    uint8_t src = 0, lvp = 0, i2ccfg = 0, wake = 0, cfg = 0;
+    if (rd(kRegPwrSrc, &src)) {
+        const char* names[] = {"5VIN (USB/DC)", "5VINOUT", "BATTERY"};
+        const uint8_t i = src & 0x07;
+        ESP_LOGW(kTag, "power source : %s (0x%02X)", i < 3 ? names[i] : "?", src);
+    }
+    if (rd(kRegBattLvp, &lvp)) {
+        // mV = 2000 + n * 7.81
+        const uint32_t thresh = 2000u + (lvp * 781u) / 100u;
+        ESP_LOGW(kTag, "batt LVP     : %lu mV (reg 0x%02X)",
+                 (unsigned long)thresh, lvp);
+        if (b.valid && b.millivolts > 0 && b.millivolts < thresh) {
+            ESP_LOGE(kTag, "  ** cell is BELOW the protection threshold. The "
+                           "PMIC will not start");
+            ESP_LOGE(kTag, "  ** the rails from battery alone -- this is why a "
+                           "PWR_KEY press does");
+            ESP_LOGE(kTag, "  ** nothing while plugging in USB wakes it. Charge "
+                           "it.");
+        }
+    }
+    if (rd(kRegI2cCfg, &i2ccfg)) {
+        const uint8_t slp = i2ccfg & 0x0F;
+        ESP_LOGW(kTag, "I2C sleep    : %s (reg 0x%02X)",
+                 slp == 0 ? "disabled (correct)" : "ENABLED -- PMIC may nap",
+                 i2ccfg);
+    }
+    if (rd(kRegWakeSrc, &wake)) {
+        ESP_LOGW(kTag, "wake source  : 0x%02X%s%s%s%s", wake,
+                 (wake & 0x04) ? " power-btn" : "",
+                 (wake & 0x02) ? " vin-insert" : "",
+                 (wake & 0x40) ? " 5vinout-insert" : "",
+                 (wake & 0x01) ? " timer" : "");
+    }
+    if (rd(kRegPwrCfg, &cfg)) {
+        ESP_LOGW(kTag, "rails        : LDO3V3=%d DCDC5V=%d BOOST=%d CHG=%d "
+                       "(reg 0x%02X)",
+                 (cfg >> 2) & 1, (cfg >> 1) & 1, (cfg >> 3) & 1, cfg & 1, cfg);
+    }
+    ESP_LOGW(kTag, "--- end ---");
+}
 
 void powerOff() {
     if (!s_available) {

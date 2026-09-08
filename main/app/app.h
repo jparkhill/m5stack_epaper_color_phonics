@@ -53,6 +53,16 @@ constexpr uint32_t kIdleSleepSec = 15 * 60;
 /// battery the timeout applies normally, which is the case that matters.
 constexpr bool kSleepWhileUsbConnected = false;
 
+/// Refuse to auto power-off below this battery percentage.
+///
+/// Counter-intuitive but deliberate. A low cell is exactly when the PMIC will
+/// not restart the rails from battery (see BATT_LVP, register 0x08), so
+/// sleeping then produces a board that ignores PWR_KEY entirely and only
+/// revives when USB is plugged in -- which reads as "bricked". A device that
+/// stays on until it visibly dies is far less confusing than one that sleeps
+/// and cannot be woken.
+constexpr uint8_t kMinBatteryPercentToSleep = 20;
+
 esp_err_t init();
 
 /// Main loop. Does not return.

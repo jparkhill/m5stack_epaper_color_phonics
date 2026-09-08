@@ -23,6 +23,27 @@ bool available();
 /// Read the card-detect line. Returns false if the PMIC is unavailable.
 bool sdCardInserted();
 
+/// Battery state, read from the PMIC's own voltage sensor.
+struct Battery {
+    uint16_t millivolts;   // raw reading
+    uint8_t percent;       // 0-100, from a Li-ion discharge curve
+    bool charging;         // running from 5V rather than the cell
+    bool valid;
+};
+
+/// Read the battery voltage (PMIC registers 0x22/0x23, in mV) and the current
+/// power source (0x04). Cheap: three I2C byte reads.
+Battery readBattery();
+
+/// Dump battery voltage, power source, the low-voltage-protection threshold
+/// and the PMIC's I2C-idle-sleep setting.
+///
+/// Exists to settle why the board sometimes refuses to wake on a PWR_KEY
+/// press but comes straight up when USB is plugged in. If the cell is below
+/// BATT_LVP the PMIC will not start the rails from the battery, while a valid
+/// 5V input satisfies it -- which produces exactly that behaviour.
+void dumpPowerState();
+
 /// Cut every rail via the PMIC. Does not return on success -- the board is
 /// off and only the hardware power button brings it back.
 ///

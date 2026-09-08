@@ -224,6 +224,11 @@ int cmdSleep(int, char**) {
     return 0;
 }
 
+int cmdBatt(int, char**) {
+    hal::power::dumpPowerState();
+    return 0;
+}
+
 int cmdVerify(int, char**) {
     std::printf("stat-ing every referenced file; this takes a while over "
                 "SPI-mode SD...\n");
@@ -292,6 +297,8 @@ esp_err_t start() {
         cmdNoSleep);
     reg("autosleep", "Re-enable the idle auto power-off (persisted)",
         cmdAutoSleep);
+    reg("batt", "Battery voltage, power source, LVP threshold, PMIC sleep cfg",
+        cmdBatt);
     reg("verify", "Stat every card asset and report what is missing (slow)",
         cmdVerify);
     reg("reboot", "Restart the device", cmdReboot);

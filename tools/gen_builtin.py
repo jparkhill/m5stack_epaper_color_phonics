@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gen_assets import Narrator, PIPER_VOICE, PIPER_VOICE_FALLBACK  # noqa: E402
 from phonics_data import (build_cards, letter_narration,  # noqa: E402
-                          word_narration, WORDS)
+                          word_narration)
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets" / "phonics"
@@ -36,11 +36,10 @@ def main():
 
     for letter, word in BUILTINS:
         card = cards[f"{letter.lower()}_{word}"]
-        syllables = next(sy for w, sy, _ in WORDS[letter] if w == word)
 
         # One utterance, so the two halves are prosodically joined rather than
         # sounding like two recordings butted together.
-        text = f"{letter_narration(letter)} {word_narration(word, syllables)}"
+        text = f"{letter_narration(letter)} {word_narration(word)}"
         dest = EMBED / f"{word}.wav"
         n.synth(text, dest)
 

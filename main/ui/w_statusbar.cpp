@@ -1,6 +1,7 @@
 #include "ui/w_statusbar.h"
 #include "ui/text_outline.h"
 #include "ui/theme.h"
+#include "hal/hal_power.h"
 #include "hal/hal_rtc.h"
 #include "hal/hal_sensors.h"
 
@@ -58,6 +59,47 @@ void barText(M5GFX& g, const char* s, int16_t x, int16_t cy,
     }
     text::drawOutlinedAt(g, s, x, cy, pick, theme::kWhite, theme::kBlack,
                          theme::kStatusTextOutlineRadius, datum);
+}
+
+/// A small battery outline with a proportional fill. Drawn rather than
+/// written because the GFX fonts have no battery glyph, and a shape reads
+/// faster than a number for a child (and for an adult across the room).
+void drawBattery(M5GFX& g, int16_t x, int16_t cy, const hal::power::Battery& b) {
+    constexpr int16_t kW = 26, kH = 13, kNubW = 3, kNubH = 6;
+    const int16_t y = static_cast<int16_t>(cy - kH / 2);
+
+    // White backing so the outline survives the gradient behind it.
+    g.fillRect(static_cast<int16_t>(x - 1), static_cast<int16_t>(y - 1),
+               static_cast<int16_t>(kW + kNubW + 3), static_cast<int16_t>(kH + 2),
+               theme::kWhite);
+    g.drawRect(x, y, kW, kH, theme::kBlack);
+    g.fillRect(static_cast<int16_t>(x + kW), static_cast<int16_t>(cy - kNubH / 2),
+               kNubW, kNubH, theme::kBlack);
+
+    if (!b.valid) {
+        // Unknown: a question mark rather than a misleading empty cell.
+        const text::FontPick tiny{&fonts::FreeSansBold9pt7b, 1.0f};
+        text::draw(g, "?", static_cast<int16_t>(x + kW / 2), cy, tiny,
+                   theme::kBlack, textdatum_t::middle_center);
+        return;
+    }
+
+    const int16_t inner = static_cast<int16_t>(kW - 4);
+    const int16_t fill = static_cast<int16_t>((inner * b.percent) / 100);
+    // Red below 20% so a flat battery is obvious at a glance -- this device
+    // has a habit of being hard to wake when the cell is low.
+    const uint32_t colour = (b.percent < 20) ? theme::kRed
+                          : (b.percent < 50) ? theme::kYellow
+                                             : theme::kGreen;
+    if (fill > 0) {
+        g.fillRect(static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), fill,
+                   static_cast<int16_t>(kH - 4), colour);
+    }
+    if (b.charging) {
+        // A bolt is fiddly at this size; a filled centre dot reads clearly.
+        g.fillCircle(static_cast<int16_t>(x + kW / 2), cy, 3, theme::kBlue);
+        g.drawCircle(static_cast<int16_t>(x + kW / 2), cy, 4, theme::kWhite);
+    }
 }
 
 }  // namespace
@@ -126,8 +168,14 @@ void StatusBar::draw(M5GFX& g) {
 
         char humi[16];
         std::snprintf(humi, sizeof(humi), "%.0f%% RH", env.humidity_pct);
+        const int16_t humi_w = text::measure(g, humi, small);
         barText(g, humi, right, static_cast<int16_t>(b.y + 47), small,
                 theme::kInk, textdatum_t::middle_right);
+
+        // Battery sits to the left of the humidity reading, on the same row.
+        const auto batt = hal::power::readBattery();
+        drawBattery(g, static_cast<int16_t>(right - humi_w - 40),
+                    static_cast<int16_t>(b.y + 47), batt);
     } else {
         barText(g, "-- C", right, static_cast<int16_t>(b.y + 20),
                 text::FontPick{&fonts::FreeSansBold18pt7b, 1}, theme::kRed,

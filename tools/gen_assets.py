@@ -76,6 +76,21 @@ USER_AGENT = ("Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 "
 MIN_SOURCE_PX = 200       # reject thumbnails
 MAX_ASPECT = 2.2          # reject banners/panoramas
 
+# Stock libraries that stamp a watermark across the preview. Their images look
+# fine in search results and then arrive with a logo bar burned into them --
+# "bird" came back as a watermarked elephant. Blocked by host.
+BLOCKED_HOSTS = (
+    "vectorstock.com", "shutterstock.com", "istockphoto.com", "dreamstime.com",
+    "123rf.com", "alamy.com", "depositphotos.com", "gettyimages.com",
+    "canstockphoto.com", "stockfresh.com", "bigstockphoto.com",
+)
+
+
+def host_blocked(url):
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == b or host.endswith("." + b) for b in BLOCKED_HOSTS)
+
 
 # ===========================================================================
 # DuckDuckGo image search
@@ -114,6 +129,8 @@ class DuckDuckGoImages:
                 for item in results:
                     url = item.get("image")
                     if not url:
+                        continue
+                    if host_blocked(url):
                         continue
                     w = int(item.get("width") or 0)
                     h = int(item.get("height") or 0)
@@ -309,6 +326,10 @@ def build_image(ddg, card, dest, force=False):
             img = to_square(boost(img), IMAGE_SIZE)
             out = dither_to_palette_fast(img)
             out.save(dest, "PNG", optimize=True)
+            # Sidecar provenance: which URL this picture came from. Useful for
+            # spotting a whole batch from one bad source, and for the
+            # licensing question these web images raise.
+            dest.with_suffix(".src.txt").write_text(url + "\n")
             return f"ok ({palette_report(out)} inks, source #{i + 1})"
         except Exception as exc:  # noqa: BLE001 - try the next candidate
             print(f"      candidate {i + 1} rejected: {exc}", flush=True)
@@ -352,11 +373,43 @@ class Narrator:
         print(f"       {n_spk} speaker(s), using id={self.speaker_id}, "
               f"length_scale={length_scale}, {self.native_rate}Hz")
 
+    # Sentence-final punctuation, used to split before synthesis.
+    _SENT_RE = None
+
+    def _sentences(self, text):
+        """Split into sentences, keeping their terminators.
+
+        Necessary because espeak's [[phoneme]] markup breaks whole-string
+        synthesis: hand piper
+            "eigh makes the [[ae]] sound. [[ae]], [[ae]]. eigh, pee. apple."
+        and it returns ONE 2.1s chunk -- everything after the first marked
+        sentence is silently dropped. Feeding one sentence at a time and
+        concatenating the PCM sidesteps it entirely, and is verifiable: the
+        output duration is now the sum of the parts.
+        """
+        import re
+        if Narrator._SENT_RE is None:
+            Narrator._SENT_RE = re.compile(r"[^.!?]+[.!?]+|\S[^.!?]*$")
+        return [m.group(0).strip() for m in Narrator._SENT_RE.finditer(text)
+                if m.group(0).strip()]
+
     def synth(self, text, dest):
         """Render `text` to a 16-bit mono PCM WAV at the voice's native rate."""
+        pcm = bytearray()
+        rate = self.native_rate
+        for sentence in self._sentences(text):
+            for chunk in self.voice.synthesize(sentence, syn_config=self.cfg):
+                pcm += chunk.audio_int16_bytes
+                rate = chunk.sample_rate
+            # A short pause between sentences, so the sound and the spelling
+            # do not run together.
+            pcm += b"\x00\x00" * int(rate * 0.12)
+
         with wave.open(str(dest), "wb") as wav:
-            # piper sets nchannels/sampwidth/framerate on the wave object.
-            self.voice.synthesize_wav(text, wav, syn_config=self.cfg)
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(rate)
+            wav.writeframes(bytes(pcm))
 
 
 def build_audio(narrator, card, dest, force=False):
@@ -406,6 +459,9 @@ def main():
     ap.add_argument("--skip-images", action="store_true")
     ap.add_argument("--skip-audio", action="store_true")
     ap.add_argument("--only", help="only cards whose letter is in this string, e.g. ABC")
+    ap.add_argument("--word", action="append", default=None,
+                    help="only these words (repeatable). Use with "
+                         "--force-images to replace one bad picture.")
     ap.add_argument("--delay", type=float, default=1.5,
                     help="seconds between DDG requests (be polite)")
     ap.add_argument("--voice", default=None,
@@ -426,6 +482,14 @@ def main():
     if args.only:
         keep = set(args.only.upper())
         cards = [c for c in cards if c["letter"] in keep]
+    if args.word:
+        want = {w.lower() for w in args.word}
+        cards = [c for c in cards if c["word"].lower() in want]
+        missing = want - {c["word"].lower() for c in cards}
+        if missing:
+            sys.exit(f"unknown word(s): {sorted(missing)}")
+        print(f"restricted to {len(cards)} card(s): "
+              f"{', '.join(c['word'] for c in cards)}")
 
     out = Path(args.out)
     (out / "phonics").mkdir(parents=True, exist_ok=True)
@@ -506,7 +570,7 @@ def main():
     # Only cards whose two assets both exist make it in, so the firmware never
     # has to render around a hole.
     entries = []
-    for card in build_cards():
+    for card in build_cards():   # always the FULL deck, never the filtered one
         img = root / card["image"]
         aud = root / card["audio"]
         if img.exists() and aud.exists():

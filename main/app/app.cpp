@@ -276,6 +276,13 @@ void dumpStatus() {
         ESP_LOGI(kTag, "microSD         : not mounted");
     }
 
+    const auto batt = hal::power::readBattery();
+    if (batt.valid) {
+        ESP_LOGI(kTag, "battery         : %u mV (~%u%%) %s", batt.millivolts,
+                 batt.percent, batt.charging ? "[external 5V]" : "[on battery]");
+    } else {
+        ESP_LOGI(kTag, "battery         : no reading");
+    }
     ESP_LOGI(kTag, "volume          : %u/255", hal::audio::volume());
     ESP_LOGI(kTag, "buttons         : %s", hal::input::rawSnapshot());
     if (s_sleep_enabled) {
@@ -424,10 +431,22 @@ void run() {
         if (s_sleep_enabled &&
             now - s_last_activity_us >
                 static_cast<int64_t>(kIdleSleepSec) * 1000000) {
+            const auto batt = hal::power::readBattery();
+            const bool too_flat = batt.valid && !batt.charging &&
+                                  batt.percent < kMinBatteryPercentToSleep;
             if (!kSleepWhileUsbConnected && usb_serial_jtag_is_connected()) {
                 // Do not yank the serial port out from under a developer.
                 ESP_LOGD(kTag, "idle timeout reached but USB is attached; "
                                "deferring sleep");
+                noteActivity();
+            } else if (too_flat) {
+                // See kMinBatteryPercentToSleep: below this the PMIC may
+                // refuse to restart from the cell, and the board would look
+                // dead rather than asleep.
+                ESP_LOGW(kTag, "idle timeout reached but battery is %u%% "
+                               "(%u mV) -- staying awake, because the PMIC may "
+                               "not wake from a cell this low",
+                         batt.percent, batt.millivolts);
                 noteActivity();
             } else {
                 goToSleep("no activity for 15 minutes");

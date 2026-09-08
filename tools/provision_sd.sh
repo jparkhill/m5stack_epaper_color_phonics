@@ -114,6 +114,8 @@ echo "copying assets..."
 rm -rf "${MNT:?}/phonics"
 mkdir -p "$MNT/phonics"
 cp -r "$ASSETS/." "$MNT/phonics/"
+# Provenance sidecars are host-side bookkeeping; the device never reads them.
+find "$MNT/phonics" -name '*.src.txt' -delete
 sync
 
 echo

@@ -4,7 +4,8 @@ Phonics content: 26 letters x 5 word/picture/sound triples.
 Each entry is (word, syllables, grapheme_override).
 
   word       lowercase spelling; also the DuckDuckGo image search term
-  syllables  hyphenated for the narration's sound-out step ("ap-ple")
+  syllables  hyphenated pronunciation. Retained as documentation only -- the
+             narration no longer sounds out syllables (see word_narration).
   grapheme   the letter span that makes the taught sound. Normally None,
              meaning "the first occurrence of the target letter" -- which is
              correct for every word here except Q, where the sound comes from
@@ -82,6 +83,19 @@ LETTER_NAMES = {
 # Extra hint appended to the image search to bias towards flat, high-contrast
 # cartoon art, which is what survives a 6-colour e-paper panel.
 IMAGE_STYLE_HINT = "cartoon clipart for kids simple white background"
+
+# Per-word search overrides, for the cases where the word alone is ambiguous
+# and the generic query returns the wrong subject.
+#   pen  -> "pen" alone returned WANTED-poster art ("pen" as in penitentiary),
+#           so it is pinned to a writing pen.
+IMAGE_QUERY_OVERRIDES = {
+    "pen": "ballpoint pen writing instrument",
+    "top": "spinning top toy",
+    "mop": "cleaning mop",
+    "bird": "small bird",
+    "present": "wrapped gift present box",
+    "dice": "pair of dice",
+}
 
 WORDS = {
     "A": [("apple", "ap-ple", None), ("ant", "ant", None),
@@ -335,13 +349,21 @@ def letter_narration(letter):
     return f"{name} makes the {sound} sound. {sound}, {sound}."
 
 
-def word_narration(word, syllables):
-    """Spoken script for a WORD: sound it out, then say it."""
-    parts = syllables.split("-")
-    if len(parts) == 1:
-        # Sounding out a one-syllable word would just say it twice.
-        return f"{word}."
-    return ", ".join(parts) + f". {word}."
+def word_narration(word):
+    """Spoken script for a WORD: spell it out by letter name, then say it.
+
+    It used to sound out syllables ("ap, ple. apple."). That does not work:
+    a TTS model is trained on running speech, not on fragments, so a
+    deliberately broken-up word comes out garbled rather than segmented.
+    Spelling the word using the letters' NAMES plays to what the model does
+    well, and is a genuinely useful thing for a child to hear alongside the
+    picture.
+
+        apple  ->  "eigh, pee, pee, ell, ee. apple."
+        box    ->  "bee, oh, ex. box."
+    """
+    spelled = ", ".join(LETTER_NAMES[ch.upper()] for ch in word if ch.isalpha())
+    return f"{spelled}. {word}."
 
 
 def build_letters():
@@ -372,8 +394,9 @@ def build_cards():
                 "span": [start, length],
                 "syllables": syllables,
                 "sound": SOUND_LABELS[letter],
-                "narration": word_narration(word, syllables),
-                "query": f"{word} {IMAGE_STYLE_HINT}",
+                "narration": word_narration(word),
+                "query": (f"{IMAGE_QUERY_OVERRIDES.get(word, word)} "
+                          f"{IMAGE_STYLE_HINT}"),
                 "image": f"cards/{letter.lower()}/{word}.png",
                 "audio": f"cards/{letter.lower()}/{word}.wav",
             })

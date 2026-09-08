@@ -110,6 +110,15 @@ const Card* advanceRandom();
 /// Probability of preferring a word-initial grapheme in advanceRandom().
 constexpr float kInitialGraphemeBias = 0.60f;
 
+/// How many recently-shown cards advanceRandom() refuses to repeat.
+///
+/// Uniform random picking over 260 cards *feels* repetitive because of the
+/// birthday paradox: by 20 draws there is already a ~53% chance of a repeat,
+/// and by 30 draws ~82%. Avoiding only back-to-back repeats was not enough --
+/// repeats were the first thing noticed in real use. A short history makes
+/// the sequence feel random without being clumpy.
+constexpr size_t kNoRepeatHistory = 64;
+
 /// Next card in a shuffled playlist covering the whole deck; reshuffles and
 /// wraps when exhausted. Kept for the `next` console command.
 const Card* advance();

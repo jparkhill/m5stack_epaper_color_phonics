@@ -20,13 +20,18 @@ constexpr const char* kTag = "input";
 // index 0 = kNextCard, 1 = kRepeat, 2 = kLetterInWord
 // value 0 -> BtnA (GPIO9), 1 -> BtnB (GPIO10), 2 -> BtnC (GPIO1)
 //
-// kNextCard is the UPPER side button = GPIO10 = BtnB, and kRepeat is the
-// LOWER one = GPIO9 = BtnA -- hence the swap of the first two entries.
-constexpr uint8_t kLogicalToPhysical[3] = {1, 0, 2};
+// Determined EMPIRICALLY on the bench, which contradicted the guess: GPIO9 is
+// the UPPER side button and GPIO10 the LOWER one. With the previous mapping
+// the two side buttons did the opposite of their on-screen labels.
+//
+// The intended arrangement (labels in ui/screen.cpp must agree):
+//   upper side  -> next card   ("word")
+//   lower side  -> repeat      ("again")
+constexpr uint8_t kLogicalToPhysical[3] = {0, 1, 2};
 
 constexpr const char* kLabels[3] = {
-    "upper side (BtnB/GPIO10) -> next card",
-    "lower side (BtnA/GPIO9) -> repeat",
+    "upper side (BtnA/GPIO9) -> next card",
+    "lower side (BtnB/GPIO10) -> repeat",
     "top (BtnC/GPIO1) -> next letter in word",
 };
 
@@ -53,7 +58,7 @@ void init() {
     ESP_LOGI(kTag, "buttons: GPIO%d, GPIO%d, GPIO%d (active-low). The 4th "
                    "(lowest side) is the PMIC power button and is not a GPIO.",
              pins::kBtnA, pins::kBtnB, pins::kBtnC);
-    ESP_LOGI(kTag, "GPIO10 upper side = next card | GPIO9 lower side = repeat "
+    ESP_LOGI(kTag, "GPIO9 upper side = next card | GPIO10 lower side = repeat "
                    "| GPIO1 top = next letter in word | PWR_KEY = power");
 }
 

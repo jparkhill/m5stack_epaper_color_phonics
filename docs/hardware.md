@@ -190,6 +190,24 @@ phonemes through verbatim and is the only reliable route:
 "eigh makes the [[æ]] sound."  ->  ˈeɪ mˈeɪks ðə æ sˈaʊnd.
 ```
 
+**But `[[...]]` markup silently truncates multi-sentence text.** Hand piper a
+whole narration containing markup and it renders only the first marked
+sentence, dropping the rest — with no error:
+
+```
+"eigh makes the [[æ]] sound. [[æ]], [[æ]]. eigh, pee, pee, ell, ee. apple."
+  -> synthesize() returns ONE 2.11s chunk
+  -> synthesize_wav() writes 1.80s
+```
+
+Both halves rendered separately come to 6.35s, so ~70% of the audio was
+being thrown away. The clue is an output *shorter than either half alone*.
+
+The fix is to split into sentences on the host and synthesise them one at a
+time, concatenating the PCM (`Narrator.synth` in `tools/gen_assets.py`). That
+is also verifiable: the result is now the sum of its parts. Measured on the
+same string, 2.14s -> 8.07s.
+
 Isolated plosives are a separate problem: /b/ with no following vowel is
 essentially inaudible, so stops use a `-uh` syllable (`[[bʌ]]`, `[[kʌ]]`),
 matching what phonics programmes teach anyway.
