@@ -35,6 +35,7 @@ enum class Event : uint8_t {
     kPresentStart,    // about to block on a panel refresh
     kPresentDone,     // refresh returned; detail = milliseconds it took
     kChimeDone,       // boot chime finished
+    kBattery,         // detail = cell millivolts
 };
 
 /// Append an event. Safe to call before init(); the first call initialises the

@@ -58,6 +58,7 @@ const char* eventName(uint8_t e) {
         case Event::kPresentStart: return "PRESENT-START";
         case Event::kPresentDone:  return "PRESENT-DONE";
         case Event::kChimeDone:    return "CHIME-DONE";
+        case Event::kBattery:      return "BATTERY";
         default:                  return "?";
     }
 }
@@ -179,6 +180,11 @@ void dump() {
                 break;
             case Event::kPresentDone:
                 std::snprintf(detail, sizeof(detail), "%lu ms refresh",
+                              (unsigned long)e.detail);
+                break;
+            case Event::kPresentStart:
+            case Event::kBattery:
+                std::snprintf(detail, sizeof(detail), "%lu mV",
                               (unsigned long)e.detail);
                 break;
             case Event::kRailsDown:

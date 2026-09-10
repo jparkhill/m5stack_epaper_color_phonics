@@ -203,9 +203,15 @@ void showCard(const content::Card* card, bool speak) {
         }
     }
 
-    boot::plog::record(boot::plog::Event::kPresentStart);
+    // Voltage right before the refresh: the EPD boost converters are the
+    // heaviest load in the boot, so if the PMIC is current-limiting or the
+    // cell is sagging, this is where it shows.
+    boot::plog::record(boot::plog::Event::kPresentStart,
+                       hal::power::readBattery().millivolts);
     const uint32_t ms = hal::display::present(hal::display::RefreshMode::kImage);
     boot::plog::record(boot::plog::Event::kPresentDone, ms);
+    boot::plog::record(boot::plog::Event::kBattery,
+                       hal::power::readBattery().millivolts);
     s_last_clock_refresh_us = esp_timer_get_time();
 
     if (card != nullptr) {
