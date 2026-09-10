@@ -142,6 +142,17 @@ e-paper refresh, which is a hardware floor. The panel holds the *previous*
 card throughout, so nothing changes on screen. **The shoulder LEDs start
 sweeping at PMIC init — if they are moving, it is booting. Give it 30 s.**
 
+### The console must not block the boot
+
+The REPL is started **only if a USB host is already attached**, with the app
+loop retrying if one appears later. `esp_console_new_repl_usb_serial_jtag()`
+blocks indefinitely when no host is present, so calling it during startup
+stops the boot dead until a cable is plugged in — on a battery toy, that
+means it will not start away from a computer. It presents as a power fault
+(LEDs cycling, screen frozen, no chime, healthy battery) and can only occur
+while untethered, which is also when you cannot observe it. See
+[`docs/hardware.md`](docs/hardware.md).
+
 ### Diagnosing a power problem after the fact
 
 `plog` dumps a 128-event ring held in **RTC slow memory** (2 KB of 8 KB,

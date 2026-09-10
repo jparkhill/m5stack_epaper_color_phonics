@@ -145,6 +145,54 @@ reading 0x40 = 2500 mV here) and below it the PMIC will not start the rails
 from the cell. It is a genuine mechanism — it just was **not** the cause of
 the wake failures on this unit, whose cell was at 4.2 V.
 
+## Starting the serial console with no USB host BLOCKS THE BOOT
+
+`esp_console_new_repl_usb_serial_jtag()` installs the USB-Serial-JTAG driver
+and switches the console VFS onto it. **With no host attached this blocks the
+calling task indefinitely.** If it is called during startup, the device simply
+stops booting until a cable is plugged in.
+
+On a battery-powered device this is brutal, and it disguises itself as a
+power-management fault, because it can only happen while untethered — which
+is also exactly when you have no way to observe it:
+
+| Symptom | Cause |
+|---|---|
+| Shoulder LEDs cycle immediately | They start at PMIC init, *before* the console |
+| Nothing else responds, ever | `app::run()` is never reached, so buttons are never polled |
+| No boot chime | The chime follows the first panel refresh |
+| Screen frozen on the previous card | e-paper is bistable and holds it |
+| Plugging in USB fixes it instantly | The blocking call finally returns |
+| Battery measures perfectly healthy | It was never a power fault |
+
+Measured from the power log — one boot sat **78 s** between `DECK-LOADED` and
+the first refresh, another **10.3 hours**, each resuming the moment a cable
+was connected, with the cell at 4098→4204 mV throughout:
+
+```
+ 2   1     2027 ms  DECK-LOADED   262 cards
+ 3   1    80319 ms  PRESENT-START 4098 mV      <- 78s of nothing
+ 4   1    96388 ms  PRESENT-DONE  16068 ms refresh
+```
+
+**Never start the REPL unconditionally.** Gate it on
+`usb_serial_jtag_is_connected()` and retry from the main loop, so a host can
+attach later:
+
+```c
+if (usb_serial_jtag_is_connected()) { console::start(); }   // boot
+...
+if (!console::started() && usb_serial_jtag_is_connected()) { // loop
+    console::start();
+}
+```
+
+This cost four wrong diagnoses (button long-press, flat battery, deep sleep,
+PMIC rails) before the power log found it in a single reading. The general
+lesson: when a fault only manifests untethered, build the on-device log
+FIRST — reasoning from symptoms is guesswork when the symptoms are all
+second-hand.
+
 ## Sleeping: use the ESP32-S3's own deep sleep, NOT the PMIC
 
 The PMIC has a shutdown command and it is the obvious way to implement an

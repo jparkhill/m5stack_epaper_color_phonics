@@ -23,6 +23,7 @@
 
 #include <esp_err.h>
 #include <esp_log.h>
+#include <driver/usb_serial_jtag.h>
 #include <nvs_flash.h>
 
 namespace {
@@ -176,9 +177,15 @@ extern "C" void app_main(void) {
     boot::heapReport("after init");
     boot::summary();
 
+    // The console is started ONLY if a USB host is already attached, and the
+    // app loop retries later if one appears. Starting it with no host blocks
+    // the boot indefinitely -- see app/console_cmds.h. The boot must never
+    // depend on a cable being plugged in.
     boot::stage("console");
     if (!kEnableConsole) {
-        boot::skip("disabled for log diagnosis");
+        boot::skip("disabled at compile time");
+    } else if (!usb_serial_jtag_is_connected()) {
+        boot::skip("no USB host; will start when one attaches");
     } else if (app::console::start() == ESP_OK) {
         boot::ok();
     } else {

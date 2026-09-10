@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/console_cmds.h"
 #include "boot/boot_trace.h"
 #include "boot/power_log.h"
 #include "content/deck.h"
@@ -488,6 +489,15 @@ void run() {
         if (now - s_last_sensor_us > static_cast<int64_t>(kSensorSampleSec) * 1000000) {
             hal::sensors::refresh();
             s_last_sensor_us = now;
+        }
+
+        // Bring the console up if a host has since attached. Deliberately
+        // not done during boot: with no host, installing the USB-Serial-JTAG
+        // driver blocks forever and the boot never finishes.
+        if (!console::started() && usb_serial_jtag_is_connected()) {
+            if (console::start() == ESP_OK) {
+                ESP_LOGI(kTag, "USB host attached; console started");
+            }
         }
 
         // "Am I half-powered?" -- if the PMIC has cut the rails while we keep
