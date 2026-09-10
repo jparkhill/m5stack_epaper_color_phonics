@@ -32,6 +32,9 @@ enum class Event : uint8_t {
     kSdMounted,
     kSdFailed,
     kDeckLoaded,
+    kPresentStart,    // about to block on a panel refresh
+    kPresentDone,     // refresh returned; detail = milliseconds it took
+    kChimeDone,       // boot chime finished
 };
 
 /// Append an event. Safe to call before init(); the first call initialises the

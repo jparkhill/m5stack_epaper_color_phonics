@@ -55,6 +55,9 @@ const char* eventName(uint8_t e) {
         case Event::kSdMounted:   return "SD-MOUNTED";
         case Event::kSdFailed:    return "SD-FAILED";
         case Event::kDeckLoaded:  return "DECK-LOADED";
+        case Event::kPresentStart: return "PRESENT-START";
+        case Event::kPresentDone:  return "PRESENT-DONE";
+        case Event::kChimeDone:    return "CHIME-DONE";
         default:                  return "?";
     }
 }
@@ -172,6 +175,10 @@ void dump() {
                 break;
             case Event::kDeckLoaded:
                 std::snprintf(detail, sizeof(detail), "%lu cards",
+                              (unsigned long)e.detail);
+                break;
+            case Event::kPresentDone:
+                std::snprintf(detail, sizeof(detail), "%lu ms refresh",
                               (unsigned long)e.detail);
                 break;
             case Event::kRailsDown:

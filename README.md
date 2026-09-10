@@ -108,55 +108,51 @@ still appear. The same card never comes up twice in a row.
 
 ## Power
 
-> **`PWR_KEY` gestures (from the M5PM1 spec):**
->
-> | Gesture | Effect |
-> |---|---|
-> | **Quick press** | Power **on** |
-> | **Double press** | Power **off** |
-> | **Hold** | Enter ROM **download mode** |
->
-> Do *not* hold the button to switch the device on. Holding it drops the chip
-> into download mode: it enumerates on USB and esptool talks to it happily,
-> but the application never runs, nothing is printed — not even ESP-IDF's own
-> bootloader banner — and the screen never updates. It looks like a dead
-> board. A quick press recovers it.
->
-> If the idle power-off is more trouble than it is worth, `nosleep` on the
-> console disables it permanently (saved to NVS); `autosleep` restores it.
+**There is no automatic sleep, by default.** `PWR_KEY` is the off switch:
+quick press on, double press off, and **never hold it** (that is the
+download-mode gesture). Because the e-paper is bistable, a powered-off device
+keeps the last card on screen at zero draw — which is the end state an idle
+timeout would have produced anyway.
 
-After **15 minutes** with no user activity (`kIdleSleepSec` in
-[`main/app/app.h`](main/app/app.h)) the device enters **ESP32-S3 deep sleep**.
-**Any of the three front buttons wakes it**, and waking is a full chip reset,
-so it boots from scratch.
+That default is a deliberate retreat after both available mechanisms proved
+able to strand the device:
 
-It deliberately does *not* use the PMIC's shutdown for this. That cuts the
-peripheral rails without resetting the chip on battery power, which leaves the
-board half-powered — shoulder LEDs still cycling, panel and SD dead, and
-unrecoverable by PWR_KEY. See [`docs/hardware.md`](docs/hardware.md).
+| Mechanism | Why it fails here |
+|---|---|
+| PMIC `SYS_CMD_SHUTDOWN` | Cuts the peripheral rails **without resetting the chip** on battery power (M5GFX's own source says so). The app keeps running with a dead panel, SD and codec — shoulder LEDs cycling, nothing else responding, and `PWR_KEY` cannot fix it because the chip never resets. |
+| ESP32-S3 deep sleep | Resets cleanly in principle, but the RTC domain is fed from the same 3.3 V rail. A power event takes the RTC domain with it, destroying the sleep state *and* the EXT1 wake configuration. Confirmed: the power log returned reinitialised with `reset=POWERON` and no `SLEEP-ENTER`. |
 
-`PWR_KEY` cannot wake from deep sleep because it is a PMIC pin, not an ESP32
-GPIO. It still works as a hardware off/on, and `poweroff` on the console does
-a true rail cut (falling back to deep sleep if the chip does not reset).
+`autosleep` opts back in (persisted in NVS) and `nosleep` opts out. If enabled
+it uses deep sleep, waking on any of the three front buttons — `PWR_KEY`
+cannot be a wake source because it is a PMIC pin, not an ESP32 GPIO.
 
-Because the e-paper panel is bistable, **the last card stays on the screen the
-whole time it is off, at zero power**. A sleeping device looks exactly like a
-printed flashcard. That is also why sleeping does not draw a "goodbye" screen:
-leaving the child's last word up is more useful than spending a 16 s refresh
-to replace it. Two descending notes play so it is clear the device chose to
-sleep rather than crashed.
+### A booting device looks dead for ~20 seconds
 
-Only button presses and console commands count as activity — the idle clock
-repaint deliberately does not, or it would keep the device awake forever.
+Measured, with the full 260-card deck:
 
-**The timeout is deferred while a USB host is attached**
-(`kSleepWhileUsbConnected`). Otherwise the device cuts power in the middle of
-a `monitor` session or a flash, the port vanishes, and the board looks
-bricked until someone presses `PWR_KEY`. On battery the timeout applies
-normally, which is the case that matters.
+```
+|   ok   microSD                82.2 ms                      |
+|   ok   deck                 1626.1 ms  262 cards            |
+|  total traced   2012.6 ms                                   |
+   READY at 20038 ms
+```
 
-`sleep` on the console triggers the identical path, which is how to test it
-without waiting a quarter of an hour. `stat` reports the countdown.
+Every init stage finishes in **2.0 s**; the remaining ~18 s is a single
+e-paper refresh, which is a hardware floor. The panel holds the *previous*
+card throughout, so nothing changes on screen. **The shoulder LEDs start
+sweeping at PMIC init — if they are moving, it is booting. Give it 30 s.**
+
+### Diagnosing a power problem after the fact
+
+`plog` dumps a 128-event ring held in **RTC slow memory** (2 KB of 8 KB,
+oldest discarded), which survives deep sleep and resets and is lost only on
+true power removal. It records boots with their reset reason, wake causes with
+the EXT1 GPIO that fired, sleeps, rail drops, SD mounts, deck loads, panel
+refreshes and their durations.
+
+It exists because this failure mode was diagnosed wrongly three times from
+live serial captures that kept missing the moment. `plog` after a failure
+gives the whole history in one paste.
 
 ## Refreshing the screen
 

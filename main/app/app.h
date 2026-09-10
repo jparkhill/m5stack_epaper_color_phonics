@@ -33,15 +33,24 @@ constexpr uint32_t kIdleClockRefreshSec = 300;
 /// fresh value is shown at the next repaint.
 constexpr uint32_t kSensorSampleSec = 30;
 
-/// Seconds of no user activity before the device powers itself off.
+/// Seconds of no user activity before the device sleeps -- ONLY when the
+/// timeout has been explicitly enabled with `autosleep`.
 ///
-/// This is a real power cut through the PMIC, not a CPU sleep state, so only
-/// the hardware power button brings it back. The e-paper panel is bistable,
-/// so the last card stays on screen the whole time at zero power -- the
-/// device looks like a printed flashcard while it is off.
+/// DISABLED BY DEFAULT, and that is a deliberate retreat. Two mechanisms were
+/// tried and both can strand the device:
 ///
-/// Only user activity counts: button presses and console commands. The idle
-/// clock repaint does not, or the device would never sleep.
+///   * PMIC SYS_CMD_SHUTDOWN cuts the peripheral rails without resetting the
+///     chip on battery power (M5GFX's own source says so), leaving the app
+///     running with a dead panel, SD card and codec.
+///   * ESP32-S3 deep sleep resets cleanly in principle, but the RTC domain is
+///     fed from the same 3.3V rail. A power event takes the RTC domain with
+///     it, destroying both the sleep state and the EXT1 wake configuration --
+///     confirmed by the power log coming back reinitialised with
+///     reset=POWERON and no SLEEP-ENTER event.
+///
+/// The e-paper panel is bistable, so PWR_KEY already gives the desired end
+/// state: the last card stays on screen at zero draw. An automatic timeout
+/// adds a way to strand the device without adding much.
 constexpr uint32_t kIdleSleepSec = 15 * 60;
 
 /// Whether to auto power-off while a USB host is attached.

@@ -53,7 +53,10 @@ int64_t s_last_clock_refresh_us = 0;
 int64_t s_last_sensor_us = 0;
 int64_t s_last_activity_us = 0;
 uint32_t s_cards_shown = 0;
-bool s_sleep_enabled = true;
+// Default OFF. See kIdleSleepSec: every sleep mechanism available on this
+// board can leave it unwakeable, and PWR_KEY plus a bistable panel already
+// achieve the same end state. `autosleep` opts back in.
+bool s_sleep_enabled = false;
 
 constexpr const char* kNvsNamespace = "phonics";
 constexpr const char* kNvsSleepKey = "sleep_en";
@@ -61,7 +64,7 @@ constexpr const char* kNvsSleepKey = "sleep_en";
 void loadSleepSetting() {
     nvs_handle_t h;
     if (nvs_open(kNvsNamespace, NVS_READONLY, &h) != ESP_OK) return;
-    uint8_t v = 1;
+    uint8_t v = 0;
     if (nvs_get_u8(h, kNvsSleepKey, &v) == ESP_OK) s_sleep_enabled = (v != 0);
     nvs_close(h);
 }
@@ -200,7 +203,9 @@ void showCard(const content::Card* card, bool speak) {
         }
     }
 
+    boot::plog::record(boot::plog::Event::kPresentStart);
     const uint32_t ms = hal::display::present(hal::display::RefreshMode::kImage);
+    boot::plog::record(boot::plog::Event::kPresentDone, ms);
     s_last_clock_refresh_us = esp_timer_get_time();
 
     if (card != nullptr) {
@@ -394,6 +399,7 @@ void run() {
         // Two rising notes: proves the codec + I2S path works without
         // narrating a whole card on every power-up.
         hal::audio::bootChime();
+        boot::plog::record(boot::plog::Event::kChimeDone);
     } else {
         hal::power::ledSet(hal::power::Led::kError);
         s_screen.present(hal::display::RefreshMode::kTextOnly);
